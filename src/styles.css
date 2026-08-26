@@ -1,0 +1,110 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "Manrope", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-status-hold: var(--status-hold);
+  --color-status-progress: var(--status-progress);
+  --color-status-done: var(--status-done);
+  --color-status-issue: var(--status-issue);
+  --color-surface: var(--surface);
+  --shadow-panel: 0 1px 0 0 oklch(1 0 0 / 6%) inset, 0 18px 40px -24px oklch(0 0 0 / 80%);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.19 0.017 255);
+  --foreground: oklch(0.96 0.005 250);
+  --surface: oklch(0.24 0.018 255);
+  --card: oklch(0.235 0.018 255);
+  --card-foreground: oklch(0.96 0.005 250);
+  --popover: oklch(0.22 0.018 255);
+  --popover-foreground: oklch(0.96 0.005 250);
+  --primary: oklch(0.79 0.155 76);
+  --primary-foreground: oklch(0.21 0.03 60);
+  --secondary: oklch(0.3 0.018 255);
+  --secondary-foreground: oklch(0.95 0.005 250);
+  --muted: oklch(0.28 0.016 255);
+  --muted-foreground: oklch(0.72 0.012 250);
+  --accent: oklch(0.32 0.02 255);
+  --accent-foreground: oklch(0.96 0.005 250);
+  --destructive: oklch(0.6 0.2 25);
+  --destructive-foreground: oklch(0.98 0.005 250);
+  --border: oklch(0.34 0.016 255);
+  --input: oklch(0.33 0.016 255);
+  --ring: oklch(0.79 0.155 76);
+  --status-hold: oklch(0.72 0.012 250);
+  --status-progress: oklch(0.72 0.13 235);
+  --status-done: oklch(0.74 0.16 150);
+  --status-issue: oklch(0.68 0.19 25);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.01em;
+  }
+}
+
+@utility panel {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-panel);
+}
+
