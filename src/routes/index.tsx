@@ -280,16 +280,18 @@ function DashboardPage() {
                 : "Tap an area to open the details view, or tap a room to jump straight into it."}
             </p>
             {lastUpdatedAt && (
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Clock className="h-3.5 w-3.5" />
-                Last data updated{" "}
-                {new Date(lastUpdatedAt).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
+              <p className="text-emerald-400 font-semibold text-sm leading-relaxed tracking-wide flex items-center gap-1.5">
+                <Clock className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>
+                  Last data updated{" "}
+                  {new Date(lastUpdatedAt).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
               </p>
             )}
           </div>
