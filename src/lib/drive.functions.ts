@@ -8,13 +8,16 @@ type UploadInput = {
   mimeType: string;
   dataBase64: string;
   folderName: string;
+  area?: string;
+  roomName?: string;
 };
 
 export const uploadWorkPhoto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: UploadInput) => {
     if (!input.roomId || !input.dataBase64) throw new Error("Missing photo data");
-    if (input.dataBase64.length > 12_000_000) throw new Error("Photo too large (max ~8MB)");
+    // 10MB raw image in base64 is ~13.7M characters
+    if (input.dataBase64.length > 15_000_000) throw new Error("Photo exceeds 10MB limit");
     return input;
   })
   .handler(async ({ data, context }) => {
@@ -61,9 +64,36 @@ export const uploadWorkPhoto = createServerFn({ method: "POST" })
       thumbnailLink?: string;
     };
 
-    const { error } = await context.supabase.from("work_photos").insert({
-      room_id: data.roomId,
-      work_item_id: data.workItemId,
+    const { supabase } = context;
+    let roomId = data.roomId;
+    if ((!roomId || roomId.startsWith("virtual-")) && data.area && data.roomName) {
+      const { data: existingRoom } = await supabase
+        .from("rooms")
+        .select("id")
+        .eq("area", data.area)
+        .eq("name", data.roomName)
+        .maybeSingle();
+      if (existingRoom?.id) {
+        roomId = existingRoom.id;
+      } else {
+        const { data: createdRoom, error: createRoomErr } = await supabase
+          .from("rooms")
+          .insert({ area: data.area, name: data.roomName, sort_order: 1 })
+          .select("id")
+          .single();
+        if (createRoomErr || !createdRoom) {
+          throw new Error(createRoomErr?.message || "Failed to create room for photo");
+        }
+        roomId = createdRoom.id;
+      }
+    }
+
+    let workItemId = data.workItemId;
+    if (workItemId?.startsWith("virtual-")) workItemId = null;
+
+    const { error } = await supabase.from("work_photos").insert({
+      room_id: roomId,
+      work_item_id: workItemId,
       file_name: file.name,
       drive_file_id: file.id,
       drive_view_url: file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`,

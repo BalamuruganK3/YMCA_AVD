@@ -5,17 +5,27 @@ import { AreaSlug } from "./constants";
 
 export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input: {
-    area: string;
-    roomName: string;
-    itemId: string;
-    itemTitle: string;
-    status: string;
-    remarks?: string | null;
-  }) => input)
+  .validator(
+    (input: {
+      area: string;
+      roomName: string;
+      itemId: string;
+      itemTitle: string;
+      status: string;
+      remarks?: string | null;
+    }) => input,
+  )
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { userId, supabase } = context;
     const { area, roomName, itemId, itemTitle, status, remarks } = data;
+
+    const { data: roles, error: roleErr } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", userId);
+    if (roleErr) throw new Error(roleErr.message);
+    const canWrite = roles?.some((r) => r.role === "staff" || r.role === "admin");
+    if (!canWrite) throw new Error("Only staff can save room work progress.");
 
     // 1. Ensure room exists
     const { data: existingRoom } = await supabase
@@ -68,7 +78,9 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
 
     // 3. Find the target work item
     let targetWorkItemId = itemId;
-    const matchByTitle = currentItems.find((i) => i.title.toLowerCase() === itemTitle.toLowerCase());
+    const matchByTitle = currentItems.find(
+      (i) => i.title.toLowerCase() === itemTitle.toLowerCase(),
+    );
     const matchById = currentItems.find((i) => i.id === itemId);
 
     if (matchByTitle) {
@@ -77,7 +89,9 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
       targetWorkItemId = matchById.id;
     } else {
       // Create missing item
-      const itemDef = targetItems.find((t) => t.title.toLowerCase() === itemTitle.toLowerCase()) ?? {
+      const itemDef = targetItems.find(
+        (t) => t.title.toLowerCase() === itemTitle.toLowerCase(),
+      ) ?? {
         group_name: "Civil Work",
         subgroup: null,
         title: itemTitle,
@@ -95,7 +109,8 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
         })
         .select("id")
         .single();
-      if (newItemErr || !newItem) throw new Error(newItemErr?.message || "Failed to create work item");
+      if (newItemErr || !newItem)
+        throw new Error(newItemErr?.message || "Failed to create work item");
       targetWorkItemId = newItem.id;
     }
 
@@ -114,20 +129,19 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
 
     if (updateErr) throw new Error(updateErr.message);
 
-    // 5. Insert work_updates log
-    await supabase.from("work_updates").insert({
+    // 5. Insert work_updates log (used by the dashboard date filter)
+    const { error: logErr } = await supabase.from("work_updates").insert({
       work_item_id: targetWorkItemId,
       status,
       remarks: remarks ?? null,
       user_id: userId,
     });
+    if (logErr) throw new Error(logErr.message);
 
     return { success: true, workItemId: targetWorkItemId, roomId };
   });
 
-export const syncDashboardRoomsServerFn = createServerFn({ method: "POST" })
-  .handler(async () => {
-    // In server environment, we can interact with supabase client or let it succeed gracefully
-    return { ok: true };
-  });
-
+export const syncDashboardRoomsServerFn = createServerFn({ method: "POST" }).handler(async () => {
+  // In server environment, we can interact with supabase client or let it succeed gracefully
+  return { ok: true };
+});

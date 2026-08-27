@@ -29,22 +29,22 @@ export function useIssues() {
   });
 }
 
-export function IssueDock() {
+export function IssueDock({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const { data: issues = [] } = useIssues();
-
-  if (issues.length === 0) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
-          className="fixed bottom-6 right-6 z-40 gap-2 shadow-lg"
-          variant="destructive"
-          size="lg"
+          variant={issues.length > 0 ? "destructive" : "outline"}
+          size="sm"
+          className={`gap-1.5 font-semibold transition-transform hover:scale-105 shadow-xs ${className ?? ""}`}
         >
-          <AlertTriangle className="h-4 w-4" />
-          Issue ({issues.length})
+          <AlertTriangle
+            className={`h-4 w-4 ${issues.length > 0 ? "animate-pulse" : "text-muted-foreground"}`}
+          />
+          <span>Issues {issues.length > 0 ? `(${issues.length})` : "(0)"}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[80vh] overflow-y-auto">
@@ -53,7 +53,10 @@ export function IssueDock() {
         </DialogHeader>
         <ul className="space-y-3">
           {issues.map((issue) => (
-            <li key={issue.id} className="rounded-lg border border-status-issue/40 bg-status-issue/10 p-3">
+            <li
+              key={issue.id}
+              className="rounded-lg border border-status-issue/40 bg-status-issue/10 p-3"
+            >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{issue.title}</span>
                 {issue.rooms && (

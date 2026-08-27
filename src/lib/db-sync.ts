@@ -30,10 +30,7 @@ export async function syncDashboardRooms() {
           ["Staff Room 2", "Staff Room 3", "Staff Room 4", "Staff Room 5"].includes(room.name)
         ) {
           roomsToDelete.push(room.id);
-        } else if (
-          room.area === "lab" &&
-          !DEFAULT_AREA_ROOMS.lab.includes(room.name)
-        ) {
+        } else if (room.area === "lab" && !DEFAULT_AREA_ROOMS.lab.includes(room.name)) {
           roomsToDelete.push(room.id);
         }
       }
@@ -86,35 +83,13 @@ export async function syncDashboardRooms() {
               .eq("room_id", currentRoomId);
 
             const existingTitles = new Set((currentItems ?? []).map((i) => i.title));
-            const targetTitles = new Set(targetItems.map((i) => i.title));
-
-            const isNonSmartClass = slug !== "smart_class";
-            const hasOldGenericOnly = isNonSmartClass && (currentItems ?? []).some(
-              (i) => (i.title === "LED Panel Lights" || i.title === "Interactive Panel") && !targetTitles.has(i.title)
-            );
-            const hasOldTitlesWithParens = isNonSmartClass && (currentItems ?? []).some((i) => i.title.includes("("));
-
-            if (!currentItems || currentItems.length === 0 || hasOldGenericOnly || hasOldTitlesWithParens) {
-              if (currentItems && currentItems.length > 0) {
-                await supabase.from("work_items").delete().eq("room_id", currentRoomId);
-              }
-
-              const workItemsToInsert = targetItems.map((item) => ({
+            const missingItems = targetItems.filter((ti) => !existingTitles.has(ti.title));
+            if (missingItems.length > 0) {
+              const toInsert = missingItems.map((item) => ({
                 ...item,
                 room_id: currentRoomId,
               }));
-
-              await supabase.from("work_items").insert(workItemsToInsert);
-            } else {
-              // Insert any missing target items
-              const missingItems = targetItems.filter((ti) => !existingTitles.has(ti.title));
-              if (missingItems.length > 0) {
-                const toInsert = missingItems.map((item) => ({
-                  ...item,
-                  room_id: currentRoomId,
-                }));
-                await supabase.from("work_items").insert(toInsert);
-              }
+              await supabase.from("work_items").insert(toInsert);
             }
           }
         }
