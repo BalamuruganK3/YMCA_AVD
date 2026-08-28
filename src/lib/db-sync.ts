@@ -21,16 +21,10 @@ export async function syncDashboardRooms() {
       const roomsList = existingRooms ?? [];
       const roomsToDelete: string[] = [];
 
-      // Remove obsolete server rooms & obsolete staff rooms (Staff Room 2-5)
+      // Remove obsolete server rooms only. Staff-created rooms (any name) are preserved
+      // so newly added rooms stay on the dashboard.
       for (const room of roomsList) {
         if (room.area === "server") {
-          roomsToDelete.push(room.id);
-        } else if (
-          room.area === "staff_room" &&
-          ["Staff Room 2", "Staff Room 3", "Staff Room 4", "Staff Room 5"].includes(room.name)
-        ) {
-          roomsToDelete.push(room.id);
-        } else if (room.area === "lab" && !DEFAULT_AREA_ROOMS.lab.includes(room.name)) {
           roomsToDelete.push(room.id);
         }
       }
@@ -39,9 +33,12 @@ export async function syncDashboardRooms() {
         await supabase.from("rooms").delete().in("id", roomsToDelete);
       }
 
-      // 2. Ensure all required rooms exist & have updated work items
+      // 2. Seed default rooms only when an area has none. Never recreate a room
+      // that staff deleted — that would undo "delete permanently".
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
+        const areaHasRooms = roomsList.some((r) => r.area === slug);
+
         for (let idx = 0; idx < roomNames.length; idx++) {
           const roomName = roomNames[idx];
           if (!roomName) continue;
@@ -55,8 +52,9 @@ export async function syncDashboardRooms() {
           }
 
           let roomId = existing?.id;
+          let justCreated = false;
 
-          if (!roomId) {
+          if (!roomId && !areaHasRooms) {
             const { data: created, error: createErr } = await supabase
               .from("rooms")
               .insert({
@@ -69,26 +67,19 @@ export async function syncDashboardRooms() {
 
             if (!createErr && created) {
               roomId = created.id;
+              justCreated = true;
+              roomsList.push({ id: created.id, area: slug, name: roomName });
             }
           }
 
-          if (roomId) {
+          if (roomId && justCreated) {
             const currentRoomId = roomId;
             const targetItems = getRoomDefaultWorkItems(slug, roomName);
-
-            // Fetch existing items for this room
-            const { data: currentItems } = await supabase
-              .from("work_items")
-              .select("id, title")
-              .eq("room_id", currentRoomId);
-
-            const existingTitles = new Set((currentItems ?? []).map((i) => i.title));
-            const missingItems = targetItems.filter((ti) => !existingTitles.has(ti.title));
-            if (missingItems.length > 0) {
-              const toInsert = missingItems.map((item) => ({
-                ...item,
-                room_id: currentRoomId,
-              }));
+            const toInsert = targetItems.map((item) => ({
+              ...item,
+              room_id: currentRoomId,
+            }));
+            if (toInsert.length > 0) {
               await supabase.from("work_items").insert(toInsert);
             }
           }

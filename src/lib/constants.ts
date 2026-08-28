@@ -30,29 +30,29 @@ export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
   smart_class: Array.from({ length: 14 }, (_, i) => `Smart Class ${i + 1}`),
   lab: ["CS lab", "Bio lab", "Chem lab", "Phy lab", "stem lab"],
   staff_room: ["Staff Room"],
-  control_room: ["Control Room"],
+  control_room: ["Server Room"],
   library: ["Library"],
-  entrance_corridor: ["Entrance Corridor"],
+  entrance_corridor: ["Entrance Corridor/Reciption"],
   principal_room: ["Principal Room"],
   admin_room: ["Admin Room"],
-  record_store_room: ["Record Store Room"],
+  record_store_room: ["Record Room"],
   medical_room: ["Medical Room"],
-  pet_room: ["PET Room"],
+  pet_room: ["P.E.T Room"],
   play_area: ["Play Area"],
 };
 
 export const AREAS: { slug: AreaSlug; label: string; image: string }[] = [
-  { slug: "smart_class", label: "Smart Class", image: smartClassImg },
-  { slug: "lab", label: "Lab", image: labImg },
+  { slug: "smart_class", label: "Smart Classes", image: smartClassImg },
+  { slug: "lab", label: "Labs", image: labImg },
   { slug: "staff_room", label: "Staff Room", image: staffRoomImg },
-  { slug: "control_room", label: "Control Room", image: serverImg },
+  { slug: "control_room", label: "Server Room", image: serverImg },
   { slug: "library", label: "Library", image: libraryImg },
-  { slug: "entrance_corridor", label: "Entrance Corridor", image: entranceImg },
+  { slug: "entrance_corridor", label: "Entrance Corridor/Reciption", image: entranceImg },
   { slug: "principal_room", label: "Principal Room", image: principalImg },
   { slug: "admin_room", label: "Admin Room", image: adminImg },
-  { slug: "record_store_room", label: "Record Store Room", image: recordImg },
+  { slug: "record_store_room", label: "Record Room", image: recordImg },
   { slug: "medical_room", label: "Medical Room", image: medicalImg },
-  { slug: "pet_room", label: "PET Room", image: petImg },
+  { slug: "pet_room", label: "P.E.T Room", image: petImg },
   { slug: "play_area", label: "Play Area", image: playImg },
 ];
 
@@ -238,20 +238,26 @@ export function getEffectiveAreaRooms<T extends { id: string; area: string; name
   existingDbRooms: T[],
 ): T[] {
   const expectedNames = DEFAULT_AREA_ROOMS[slug] || [];
-  const areaRooms = existingDbRooms.filter(
-    (r) =>
-      r.area === slug &&
-      !["Staff Room 2", "Staff Room 3", "Staff Room 4", "Staff Room 5"].includes(r.name),
-  );
+  const areaRooms = existingDbRooms.filter((r) => r.area === slug);
 
-  return expectedNames.map((name, index) => {
-    const found = areaRooms.find((r) => r.name === name);
-    if (found) return found;
-    return {
-      id: `virtual-${slug}-${index + 1}`,
-      area: slug,
-      name: name,
-      work_items: [],
-    } as unknown as T;
-  });
+  const byName = new Map(areaRooms.map((r) => [r.name, r]));
+  const result: T[] = [];
+
+  // Real default rooms first. Deleted rooms stay gone — do not inject placeholders.
+  for (const name of expectedNames) {
+    const found = byName.get(name);
+    if (found) {
+      result.push(found);
+      byName.delete(name);
+    }
+  }
+
+  // Extra staff-created rooms for this type.
+  for (const room of areaRooms) {
+    if (byName.has(room.name)) {
+      result.push(room);
+    }
+  }
+
+  return result;
 }

@@ -18,6 +18,10 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { userId, supabase } = context;
     const { area, roomName, itemId, itemTitle, status, remarks } = data;
+    const cleanRemarks = (remarks ?? "").replace(/\[Range:\s*\d+%\]\s*/i, "").trim();
+    if (!cleanRemarks) {
+      throw new Error("Please enter remarks before saving this update.");
+    }
 
     const { data: roles, error: roleErr } = await supabase
       .from("user_roles")
@@ -36,9 +40,10 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
       .maybeSingle();
 
     let roomId = existingRoom?.id;
+    let createdRoom = false;
 
     if (!roomId) {
-      const { data: createdRoom, error: createRoomErr } = await supabase
+      const { data: created, error: createRoomErr } = await supabase
         .from("rooms")
         .insert({
           area,
@@ -48,13 +53,14 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
         .select("id")
         .single();
 
-      if (createRoomErr || !createdRoom) {
+      if (createRoomErr || !created) {
         throw new Error(createRoomErr?.message || "Failed to create room");
       }
-      roomId = createdRoom.id;
+      roomId = created.id;
+      createdRoom = true;
     }
 
-    // 2. Ensure default items exist for this room
+    // 2. Seed defaults only for a brand-new room, not after staff emptied one.
     const targetItems = getRoomDefaultWorkItems(area as AreaSlug, roomName);
     const { data: existingItems } = await supabase
       .from("work_items")
@@ -63,7 +69,7 @@ export const saveWorkItemStatusServerFn = createServerFn({ method: "POST" })
 
     let currentItems = existingItems ?? [];
 
-    if (currentItems.length === 0) {
+    if (currentItems.length === 0 && createdRoom) {
       const toInsert = targetItems.map((item) => ({
         ...item,
         room_id: roomId,

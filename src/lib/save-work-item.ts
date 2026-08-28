@@ -13,6 +13,11 @@ export async function saveWorkItemStatusClient(input: {
 }) {
   const { userId, area, roomName, itemId, itemTitle, status, remarks } = input;
 
+  const cleanRemarks = (remarks ?? "").replace(/\[Range:\s*\d+%\]\s*/i, "").trim();
+  if (!cleanRemarks) {
+    throw new Error("Please enter remarks before saving this update.");
+  }
+
   const { data: existingRoom, error: roomFetchErr } = await supabase
     .from("rooms")
     .select("id")
@@ -22,16 +27,18 @@ export async function saveWorkItemStatusClient(input: {
   if (roomFetchErr) throw roomFetchErr;
 
   let roomId = existingRoom?.id;
+  let createdRoom = false;
   if (!roomId) {
-    const { data: createdRoom, error: createRoomErr } = await supabase
+    const { data: created, error: createRoomErr } = await supabase
       .from("rooms")
       .insert({ area, name: roomName, sort_order: 1 })
       .select("id")
       .single();
-    if (createRoomErr || !createdRoom) {
+    if (createRoomErr || !created) {
       throw new Error(createRoomErr?.message || "Failed to create room");
     }
-    roomId = createdRoom.id;
+    roomId = created.id;
+    createdRoom = true;
   }
 
   const targetItems = getRoomDefaultWorkItems(area as AreaSlug, roomName);
@@ -42,7 +49,7 @@ export async function saveWorkItemStatusClient(input: {
   if (itemsErr) throw itemsErr;
 
   let currentItems = existingItems ?? [];
-  if (currentItems.length === 0) {
+  if (currentItems.length === 0 && createdRoom) {
     const toInsert = targetItems.map((item) => ({
       ...item,
       room_id: roomId,

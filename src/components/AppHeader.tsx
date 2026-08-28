@@ -74,7 +74,7 @@ export function AppHeader({ subtitle }: { subtitle?: string }) {
               <div className="text-right">
                 <div className="text-sm font-medium leading-tight">{name || "Staff Member"}</div>
                 <div className="text-[10px] font-bold uppercase tracking-widest text-primary">
-                  Staff Edit View
+                  Edit View
                 </div>
               </div>
               <Button variant="outline" size="sm" onClick={signOut}>
