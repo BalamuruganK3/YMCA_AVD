@@ -12,8 +12,8 @@ import {
   getEffectiveAreaRooms,
   AreaSlug,
   getCircularColor,
-  STATUS_LABEL,
-  areaLabel,
+  getItemDisplayStatus,
+  getItemWeight,
 } from "@/lib/constants";
 import { syncDashboardRooms } from "@/lib/db-sync";
 import { getRoomDefaultWorkItems } from "@/lib/room-tasks";
@@ -22,6 +22,9 @@ import { IssueDock } from "@/components/IssueDock";
 import { CircularProgress } from "@/components/CircularProgress";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { useAuth } from "@/hooks/useAuth";
+import { toAllCaps, toTitleCase } from "@/lib/utils";
+import { OVERALL_REMARKS_TITLE } from "@/lib/room-remarks";
+import ymcaLogo from "@/assets/YMCA.jpeg";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -224,7 +227,7 @@ function NewRoomDialog() {
 
   // Custom areas created earlier (via "Others…") — persist so staff can reuse
   // them as predefined room types on the next visit without re-typing the name.
-  const builtinSlugs = new Set(AREAS.map((a) => a.slug));
+  const builtinSlugs = new Set<string>(AREAS.map((a) => a.slug));
   const { data: customAreas = [] } = useQuery({
     queryKey: ["custom-areas"],
     queryFn: async () => {
@@ -235,8 +238,9 @@ function NewRoomDialog() {
       if (error) throw error;
       const slugSet = new Set<string>();
       for (const row of data ?? []) {
-        const slug = String(row.area).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-        if (slug && !builtinSlugs.has(slug)) slugSet.add(slug);
+        const raw = String(row.area).trim();
+        const normalized = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+        if (raw && !builtinSlugs.has(normalized) && !builtinSlugs.has(raw as AreaSlug)) slugSet.add(raw);
       }
       return Array.from(slugSet).sort();
     },
@@ -255,7 +259,7 @@ function NewRoomDialog() {
   const titleCase = (s: string) =>
     s
       .split(/[-_]/)
-      .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+      .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1) : w))
       .join(" ");
 
   // Turn a free-text area name into a url-usable slug, e.g. "Gym Hall" -> "gym-hall".
@@ -279,9 +283,11 @@ function NewRoomDialog() {
       if (isCustomArea) {
         const customSlug = toSlug(customArea);
         if (!customSlug) throw new Error("Please enter a new area name (e.g. Gym Hall).");
-        areaValue = customSlug as AreaSlug;
+        areaValue = toAllCaps(customSlug.replace(/-/g, " ")).replace(/\s+/g, "-") as AreaSlug;
+      } else if (customAreaPreset) {
+        areaValue = customAreaPreset as AreaSlug;
       }
-      const baseName = roomName.trim();
+      const baseName = toTitleCase(roomName);
       if (!baseName) throw new Error("Please enter a room name (e.g. Staff Room).");
       const count = Math.max(1, Math.floor(roomCount) || 1);
       const validWorks = works.filter((w) => w.heading.trim() && w.subheading.trim() && w.work.trim());
@@ -315,9 +321,9 @@ function NewRoomDialog() {
         } else {
           const toInsert = validWorks.map((w, idx) => ({
             room_id: room.id,
-            group_name: w.heading.trim(),
-            subgroup: w.subheading.trim(),
-            title: w.work.trim(),
+            group_name: toAllCaps(w.heading),
+            subgroup: toTitleCase(w.subheading),
+            title: toTitleCase(w.work),
             kind: w.action,
             status: "hold" as const,
             sort_order: idx + 1,
@@ -563,97 +569,214 @@ function PrintReportDialog({
     }
     setGenerating(true);
     try {
-      const startOfDay = new Date(reportDate + "T00:00:00").toISOString();
       const endOfDay = new Date(reportDate + "T23:59:59.999").toISOString();
 
-      const { data: updates, error } = await supabase
-        .from("work_updates")
-        .select("work_item_id, status, remarks, created_at")
-        .gte("created_at", startOfDay)
-        .lte("created_at", endOfDay)
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-
-      const list = updates ?? [];
-      const itemIds = Array.from(new Set(list.map((u) => u.work_item_id)));
-      let itemsMap = new Map<string, { title: string; roomName: string; area: string }>();
-      if (itemIds.length > 0) {
-        const { data: items, error: iErr } = await supabase
-          .from("work_items")
-          .select("id, title, room_id");
-        if (iErr) throw iErr;
-        const roomIds = Array.from(new Set((items ?? []).map((it) => it.room_id)));
-        let roomsMap = new Map<string, { name: string; area: string }>();
-        if (roomIds.length > 0) {
-          const { data: rooms, error: rErr } = await supabase
-            .from("rooms")
-            .select("id, name, area")
-            .in("id", roomIds);
-          if (rErr) throw rErr;
-          roomsMap = new Map((rooms ?? []).map((r) => [r.id, { name: r.name, area: r.area }]));
+      const pageSize = 1000;
+      const fetchAll = async <T,>(
+        run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+      ): Promise<T[]> => {
+        const all: T[] = [];
+        let from = 0;
+        while (true) {
+          const { data, error } = await run(from, from + pageSize - 1);
+          if (error) throw error;
+          const chunk = data ?? [];
+          all.push(...chunk);
+          if (chunk.length < pageSize) break;
+          from += pageSize;
         }
-        itemsMap = new Map(
-          (items ?? []).map((it) => {
-            const rm = roomsMap.get(it.room_id);
-            return [
-              it.id,
-              { title: it.title, roomName: rm?.name ?? "", area: rm?.area ?? "" },
-            ];
-          }),
-        );
+        return all;
+      };
+
+      type RoomRow = { id: string; area: string; name: string; sort_order: number };
+      type ItemRow = {
+        id: string;
+        room_id: string;
+        group_name: string;
+        subgroup: string | null;
+        title: string;
+        kind: string;
+        status: string;
+        remarks: string | null;
+        sort_order: number;
+        created_at: string;
+      };
+      type UpdateRow = { work_item_id: string; status: string; remarks: string | null; created_at: string };
+
+      const rooms = await fetchAll<RoomRow>((from, to) =>
+        supabase.from("rooms").select("id, area, name, sort_order").order("sort_order").range(from, to),
+      );
+      const items = await fetchAll<ItemRow>((from, to) =>
+        supabase
+          .from("work_items")
+          .select("id, room_id, group_name, subgroup, title, kind, status, remarks, sort_order, created_at")
+          .order("sort_order")
+          .range(from, to),
+      );
+      const updates = await fetchAll<UpdateRow>((from, to) =>
+        supabase
+          .from("work_updates")
+          .select("work_item_id, status, remarks, created_at")
+          .lte("created_at", endOfDay)
+          .order("created_at", { ascending: true })
+          .range(from, to),
+      );
+
+      const latestByItem = new Map<string, { status: string; remarks: string | null }>();
+      for (const update of updates) {
+        latestByItem.set(update.work_item_id, {
+          status: update.status,
+          remarks: update.remarks,
+        });
       }
 
-      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-      doc.setFontSize(16);
-      doc.setFont("helvetica", "bold");
-      doc.text("AV DYNAMICS PRIVATE LIMITED", 40, 40);
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-      doc.text("Daily Works Progress Report", 40, 60);
+      type ProcessRow = {
+        id: string;
+        room_id: string;
+        group_name: string;
+        subgroup: string | null;
+        title: string;
+        kind: string;
+        status: string;
+        remarks: string | null;
+        sort_order: number;
+      };
+
+      const processesByRoom = new Map<string, ProcessRow[]>();
+      for (const item of items) {
+        if (item.title === OVERALL_REMARKS_TITLE) continue;
+        if (item.created_at && item.created_at > endOfDay) continue;
+        const asOf = latestByItem.get(item.id);
+        const row: ProcessRow = {
+          id: item.id,
+          room_id: item.room_id,
+          group_name: item.group_name,
+          subgroup: item.subgroup,
+          title: item.title,
+          kind: item.kind,
+          status: asOf?.status ?? item.status ?? "hold",
+          remarks: asOf?.remarks ?? item.remarks ?? null,
+          sort_order: item.sort_order,
+        };
+        const list = processesByRoom.get(item.room_id) ?? [];
+        list.push(row);
+        processesByRoom.set(item.room_id, list);
+      }
+
+      const knownSlugs = AREAS.map((a) => a.slug);
+      const extraSlugs = Array.from(
+        new Set(rooms.map((r) => r.area).filter((a) => a && !knownSlugs.includes(a as AreaSlug))),
+      );
+      const orderedAreaSlugs = [...knownSlugs, ...extraSlugs];
+
+      const body: string[][] = [];
+      for (const slug of orderedAreaSlugs) {
+        const areaRooms = getEffectiveAreaRooms(slug as AreaSlug, rooms);
+        const typeLabel = AREAS.find((a) => a.slug === slug)?.label ?? slug.replace(/[-_]/g, " ");
+        for (const room of areaRooms) {
+          const processes = (processesByRoom.get(room.id) ?? []).sort(
+            (a, b) => a.sort_order - b.sort_order,
+          );
+          const roomPct = getRoomProgress(
+            { name: room.name, work_items: processes },
+            slug as AreaSlug,
+          );
+          if (processes.length === 0) {
+            body.push([
+              typeLabel,
+              `${room.name} (${roomPct}%)`,
+              "",
+              "No processes",
+              "",
+              `${roomPct}%`,
+            ]);
+            continue;
+          }
+          for (const process of processes) {
+            const pct = Math.round(getItemWeight(process) * 100);
+            body.push([
+              typeLabel,
+              `${room.name} (${roomPct}%)`,
+              process.group_name || "",
+              process.title,
+              getItemDisplayStatus(process, false),
+              `${pct}%`,
+            ]);
+          }
+        }
+      }
+
+      let logoDataUrl = "";
+      try {
+        const res = await fetch(ymcaLogo);
+        const blob = await res.blob();
+        logoDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        logoDataUrl = "";
+      }
+
       const prettyDate = new Date(reportDate + "T00:00:00").toLocaleDateString(undefined, {
         weekday: "long",
         year: "numeric",
         month: "long",
         day: "numeric",
       });
-      doc.text(`Date: ${prettyDate}`, 40, 78);
-      doc.text(`Total updates recorded: ${list.length}`, 40, 96);
+      const schoolName = "YMCA Boys Town Higher Secondary School, Kottivakkam, Chennai";
 
-      if (list.length === 0) {
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+      const drawHeader = () => {
+        if (logoDataUrl) {
+          doc.addImage(logoDataUrl, "JPEG", 40, 16, 48, 48);
+        }
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        const nameLines = doc.splitTextToSize(schoolName, 700);
+        doc.text(nameLines, logoDataUrl ? 98 : 40, 34);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        const subtitleY = 34 + nameLines.length * 14;
+        doc.text("Daily Works Progress Report", logoDataUrl ? 98 : 40, subtitleY);
+        doc.text(`As of ${prettyDate}`, logoDataUrl ? 98 : 40, subtitleY + 14);
+      };
+
+      if (body.length === 0) {
+        drawHeader();
         doc.setFontSize(12);
         doc.setFont("helvetica", "italic");
-        doc.text("No staff updates were recorded on this date.", 40, 130);
+        doc.text("No rooms or processes were found for this report.", 40, 110);
       } else {
-        const body = list.map((u) => {
-          const info = itemsMap.get(u.work_item_id);
-          return [
-            info?.area ? areaLabel(info.area) : "",
-            info?.roomName ?? "",
-            info?.title ?? "",
-            STATUS_LABEL[u.status] ?? u.status,
-            u.remarks?.trim() || "",
-            new Date(u.created_at).toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          ];
-        });
         autoTable(doc, {
-          startY: 112,
-          head: [["Area", "Room", "Work / Task", "Status", "Remarks", "Time"]],
+          startY: 88,
+          margin: { top: 88, left: 40, right: 40 },
+          head: [["Room Type", "Room", "Heading", "Process", "Status", "% Complete"]],
           body,
-          styles: { fontSize: 9 },
-          headStyles: { fillColor: [37, 99, 235] },
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: [37, 99, 235], fontStyle: "bold" },
+          columnStyles: {
+            0: { cellWidth: 110 },
+            1: { cellWidth: 130 },
+            2: { cellWidth: 110 },
+            3: { cellWidth: 220 },
+            4: { cellWidth: 90 },
+            5: { cellWidth: 70, halign: "right" },
+          },
+          didDrawPage: () => {
+            drawHeader();
+          },
           didParseCell: (data) => {
-            if (data.section === "body" && data.column.index === 3) {
-              data.cell.styles.textColor = [37, 99, 235];
+            if (data.section === "body" && data.column.index === 5) {
               data.cell.styles.fontStyle = "bold";
             }
           },
         });
       }
 
-      doc.save(`Daily_Report_${reportDate}.pdf`);
+      doc.save(`YMCA Boys School_${reportDate}.pdf`);
       toast.success("PDF report downloaded.");
       queryClient.invalidateQueries({ queryKey: ["last-data-updated"] });
     } catch (err) {
@@ -681,8 +804,9 @@ function PrintReportDialog({
             onChange={(e) => setReportDate(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            The report lists every process updated by staff on this date (issues, holds,
-            in-progress, completed, ordered, received, supplied, installed), including remarks.
+            The report follows dashboard room-type order (Smart Classes, Labs, Staff Room, and so on).
+            Each room lists its processes and the completion percentage as of this date. Rooms with no
+            updates on this date keep their last saved progress from previous days.
           </p>
         </div>
         <DialogFooter className="gap-2 sm:gap-0">
@@ -781,9 +905,9 @@ function DashboardPage() {
   });
 
   // Custom areas created via the "Others…" option appear as brand-new tabs.
-  const knownSlugs = AREAS.map((a) => a.slug);
+  const knownSlugSet = new Set<string>(AREAS.map((a) => a.slug));
   const extraAreaSlugs = Array.from(
-    new Set(rawRooms.map((r) => r.area).filter((a): a is string => !!a && !knownSlugs.includes(a))),
+    new Set(rawRooms.map((r) => r.area).filter((a) => !!a && !knownSlugSet.has(a))),
   );
   const titleCase = (s: string) =>
     s
@@ -852,7 +976,7 @@ function DashboardPage() {
 
               {/* 2. Add your text label here */}
               <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                Past History
+                Past Date's History
               </span>
 
               {/* 3. Your original container box (with custom border color) */}
