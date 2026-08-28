@@ -30,29 +30,29 @@ export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
   smart_class: Array.from({ length: 14 }, (_, i) => `Smart Class ${i + 1}`),
   lab: ["CS lab", "Bio lab", "Chem lab", "Phy lab", "stem lab"],
   staff_room: ["Staff Room"],
-  control_room: ["Control Room"],
+  control_room: ["Server Room"],
   library: ["Library"],
-  entrance_corridor: ["Entrance Corridor"],
+  entrance_corridor: ["Entrance Corridor/Reciption"],
   principal_room: ["Principal Room"],
   admin_room: ["Admin Room"],
-  record_store_room: ["Record Store Room"],
+  record_store_room: ["Record Room"],
   medical_room: ["Medical Room"],
-  pet_room: ["PET Room"],
+  pet_room: ["P.E.T Room"],
   play_area: ["Play Area"],
 };
 
 export const AREAS: { slug: AreaSlug; label: string; image: string }[] = [
-  { slug: "smart_class", label: "Smart Class", image: smartClassImg },
-  { slug: "lab", label: "Lab", image: labImg },
+  { slug: "smart_class", label: "Smart Classes", image: smartClassImg },
+  { slug: "lab", label: "Labs", image: labImg },
   { slug: "staff_room", label: "Staff Room", image: staffRoomImg },
-  { slug: "control_room", label: "Control Room", image: serverImg },
+  { slug: "control_room", label: "Server Room", image: serverImg },
   { slug: "library", label: "Library", image: libraryImg },
-  { slug: "entrance_corridor", label: "Entrance Corridor", image: entranceImg },
+  { slug: "entrance_corridor", label: "Entrance Corridor/Reciption", image: entranceImg },
   { slug: "principal_room", label: "Principal Room", image: principalImg },
   { slug: "admin_room", label: "Admin Room", image: adminImg },
-  { slug: "record_store_room", label: "Record Store Room", image: recordImg },
+  { slug: "record_store_room", label: "Record Room", image: recordImg },
   { slug: "medical_room", label: "Medical Room", image: medicalImg },
-  { slug: "pet_room", label: "PET Room", image: petImg },
+  { slug: "pet_room", label: "P.E.T Room", image: petImg },
   { slug: "play_area", label: "Play Area", image: playImg },
 ];
 
@@ -77,7 +77,7 @@ export const STATUS_LABEL: Record<string, string> = {
 /** How much a status contributes to the room completion percentage. */
 const STATUS_WEIGHT: Record<string, number> = {
   hold: 0,
-  issue: 0.25,
+  issue: 0,
   in_progress: 0.5,
   completed: 1,
   ordered: 0.25,
@@ -87,6 +87,10 @@ const STATUS_WEIGHT: Record<string, number> = {
 };
 
 export function getItemWeight(item: { status: string; remarks?: string | null }): number {
+  const status = item.status;
+  if (status === "hold" || status === "issue") return 0;
+  if (status === "completed" || status === "installed") return 1;
+
   if (item.remarks) {
     const match = item.remarks.match(/\[Range:\s*(\d+)%\]/i);
     if (match && match[1]) {
@@ -96,11 +100,51 @@ export function getItemWeight(item: { status: string; remarks?: string | null })
       }
     }
   }
-  return STATUS_WEIGHT[item.status] ?? 0;
+  return STATUS_WEIGHT[status] ?? 0;
 }
 
 export function statusesFor(kind: string) {
   return kind === "material" ? [...MATERIAL_STATUSES] : [...WORK_STATUSES];
+}
+
+import { getRoomDefaultWorkItems } from "./room-tasks";
+
+export function getRoomProgress(
+  room: { name: string; work_items?: { status: string; remarks?: string | null; title?: string }[] | null },
+  areaSlug: AreaSlug,
+): number {
+  const defaultTasks = getRoomDefaultWorkItems(areaSlug, room.name);
+  const dbItems = room.work_items ?? [];
+  if (dbItems.length === 0) return 0;
+
+  const taskCount = defaultTasks.length || dbItems.length;
+  if (!taskCount) return 0;
+
+  let sumWeight = 0;
+  let matchedAny = false;
+  for (const defaultTask of defaultTasks) {
+    const matched = dbItems.find(
+      (item) => (item.title || "").toLowerCase() === defaultTask.title.toLowerCase(),
+    );
+    if (matched) {
+      matchedAny = true;
+      sumWeight += getItemWeight(matched);
+    }
+  }
+
+  if (!matchedAny) {
+    const sumAll = dbItems.reduce((acc, i) => acc + getItemWeight(i), 0);
+    return Math.min(100, Math.round((sumAll / dbItems.length) * 100));
+  }
+
+  return Math.min(100, Math.round((sumWeight / taskCount) * 100));
+}
+
+export function getAreaOverallProgress(areaSlug: AreaSlug, areaRooms: any[]): number {
+  if (!areaRooms || !areaRooms.length) return 0;
+  const roomProgressList = areaRooms.map((room) => getRoomProgress(room, areaSlug));
+  const totalSum = roomProgressList.reduce((acc, pct) => acc + pct, 0);
+  return Math.round(totalSum / areaRooms.length);
 }
 
 export function progressOf(items: { status: string; remarks?: string | null }[]) {
@@ -110,11 +154,76 @@ export function progressOf(items: { status: string; remarks?: string | null }[])
 }
 
 export function getCircularColor(pct: number) {
-  if (pct >= 100) return { stroke: "#22c55e", text: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/30" };
-  if (pct >= 75) return { stroke: "#14b8a6", text: "text-teal-500", bg: "bg-teal-500/10", border: "border-teal-500/30" };
-  if (pct >= 50) return { stroke: "#3b82f6", text: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500/30" };
-  if (pct >= 25) return { stroke: "#f59e0b", text: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/30" };
-  return { stroke: "#f43f5e", text: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/30" };
+  if (pct >= 100)
+    return {
+      stroke: "#22c55e",
+      text: "text-emerald-500",
+      bg: "bg-emerald-500/10",
+      border: "border-emerald-500/30",
+    };
+  if (pct >= 75)
+    return {
+      stroke: "#14b8a6",
+      text: "text-teal-500",
+      bg: "bg-teal-500/10",
+      border: "border-teal-500/30",
+    };
+  if (pct >= 50)
+    return {
+      stroke: "#3b82f6",
+      text: "text-blue-500",
+      bg: "bg-blue-500/10",
+      border: "border-blue-500/30",
+    };
+  if (pct >= 25)
+    return {
+      stroke: "#f59e0b",
+      text: "text-amber-500",
+      bg: "bg-amber-500/10",
+      border: "border-amber-500/30",
+    };
+  return {
+    stroke: "#f43f5e",
+    text: "text-rose-500",
+    bg: "bg-rose-500/10",
+    border: "border-rose-500/30",
+  };
+}
+
+export function isItemManuallyOnHold(item: { status: string; remarks?: string | null }): boolean {
+  if (item.status !== "hold") return false;
+  const clean = (item.remarks ?? "").replace(/\[Range:\s*\d+%\]\s*/i, "").trim();
+  return clean.length > 0;
+}
+
+export function getItemDisplayStatus(
+  item: { status: string; remarks?: string | null },
+  isAdmin?: boolean,
+): string {
+  if (item.status === "hold") {
+    if (isItemManuallyOnHold(item)) {
+      return "Hold";
+    }
+    return "Initiated";
+  }
+  if (item.status === "issue" && isAdmin) {
+    return "Hold";
+  }
+  return STATUS_LABEL[item.status] ?? item.status;
+}
+
+export function getItemStatusTone(
+  item: { status: string; remarks?: string | null },
+  isAdmin?: boolean,
+): string {
+  if (item.status === "completed" || item.status === "installed") return "done";
+  if (item.status === "issue") {
+    return isAdmin ? "hold" : "issue";
+  }
+  if (item.status === "hold") {
+    return isItemManuallyOnHold(item) ? "hold" : "initiated";
+  }
+  return "progress";
 }
 
 export function statusTone(status: string) {
@@ -126,23 +235,29 @@ export function statusTone(status: string) {
 
 export function getEffectiveAreaRooms<T extends { id: string; area: string; name: string }>(
   slug: AreaSlug,
-  existingDbRooms: T[]
+  existingDbRooms: T[],
 ): T[] {
   const expectedNames = DEFAULT_AREA_ROOMS[slug] || [];
-  const areaRooms = existingDbRooms.filter(
-    (r) => r.area === slug && !["Staff Room 2", "Staff Room 3", "Staff Room 4", "Staff Room 5"].includes(r.name)
-  );
+  const areaRooms = existingDbRooms.filter((r) => r.area === slug);
 
-  return expectedNames.map((name, index) => {
-    const found = areaRooms.find((r) => r.name === name);
-    if (found) return found;
-    return {
-      id: `virtual-${slug}-${index + 1}`,
-      area: slug,
-      name: name,
-      work_items: [],
-    } as unknown as T;
-  });
+  const byName = new Map(areaRooms.map((r) => [r.name, r]));
+  const result: T[] = [];
+
+  // Real default rooms first. Deleted rooms stay gone — do not inject placeholders.
+  for (const name of expectedNames) {
+    const found = byName.get(name);
+    if (found) {
+      result.push(found);
+      byName.delete(name);
+    }
+  }
+
+  // Extra staff-created rooms for this type.
+  for (const room of areaRooms) {
+    if (byName.has(room.name)) {
+      result.push(room);
+    }
+  }
+
+  return result;
 }
-
-

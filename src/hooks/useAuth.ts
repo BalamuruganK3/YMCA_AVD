@@ -1,9 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 export type Role = "admin" | "staff";
 
 export function useAuth() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      queryClient.invalidateQueries({ queryKey: ["auth-session"] });
+    });
+    return () => subscription.unsubscribe();
+  }, [queryClient]);
+
   const query = useQuery({
     queryKey: ["auth-session"],
     queryFn: async () => {
@@ -28,7 +38,8 @@ export function useAuth() {
     user: query.data?.user ?? null,
     role: query.data?.role ?? null,
     name: query.data?.name ?? "",
-    isAdmin: query.data?.role === "admin",
+    isStaff: query.data?.role === "staff",
+    isAdmin: query.data?.role === "admin" || !query.data?.user,
     loading: query.isLoading,
   };
 }
