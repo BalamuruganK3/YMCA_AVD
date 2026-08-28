@@ -102,7 +102,8 @@ function AuthPage() {
               Staff Portal Login
             </h1>
             <p className="text-xs text-muted-foreground mt-1">
-              Sign in with your staff account to update room task progress, post remarks, and upload site photos.
+              Sign in with your staff account to update room task progress, post remarks, and upload
+              site photos.
             </p>
           </div>
         </div>

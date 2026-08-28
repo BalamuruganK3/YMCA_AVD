@@ -8,7 +8,9 @@ export function useAuth() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
       queryClient.invalidateQueries({ queryKey: ["auth-session"] });
     });
     return () => subscription.unsubscribe();

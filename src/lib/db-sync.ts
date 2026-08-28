@@ -21,16 +21,10 @@ export async function syncDashboardRooms() {
       const roomsList = existingRooms ?? [];
       const roomsToDelete: string[] = [];
 
-      // Remove obsolete server rooms & obsolete staff rooms (Staff Room 2-5)
+      // Remove obsolete server rooms only. Staff-created rooms (any name) are preserved
+      // so newly added rooms stay on the dashboard.
       for (const room of roomsList) {
         if (room.area === "server") {
-          roomsToDelete.push(room.id);
-        } else if (
-          room.area === "staff_room" &&
-          ["Staff Room 2", "Staff Room 3", "Staff Room 4", "Staff Room 5"].includes(room.name)
-        ) {
-          roomsToDelete.push(room.id);
-        } else if (room.area === "lab" && !DEFAULT_AREA_ROOMS.lab.includes(room.name)) {
           roomsToDelete.push(room.id);
         }
       }

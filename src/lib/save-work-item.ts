@@ -56,9 +56,7 @@ export async function saveWorkItemStatusClient(input: {
   }
 
   let targetWorkItemId = itemId;
-  const matchByTitle = currentItems.find(
-    (i) => i.title.toLowerCase() === itemTitle.toLowerCase(),
-  );
+  const matchByTitle = currentItems.find((i) => i.title.toLowerCase() === itemTitle.toLowerCase());
   const matchById = currentItems.find((i) => i.id === itemId);
 
   if (matchByTitle) {
@@ -66,9 +64,7 @@ export async function saveWorkItemStatusClient(input: {
   } else if (matchById) {
     targetWorkItemId = matchById.id;
   } else {
-    const itemDef = targetItems.find(
-      (t) => t.title.toLowerCase() === itemTitle.toLowerCase(),
-    ) ?? {
+    const itemDef = targetItems.find((t) => t.title.toLowerCase() === itemTitle.toLowerCase()) ?? {
       group_name: "Civil Work",
       subgroup: null,
       title: itemTitle,

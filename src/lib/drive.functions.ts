@@ -26,11 +26,17 @@ export const uploadWorkPhoto = createServerFn({ method: "POST" })
     if (!lovableKey || !driveKey) throw new Error("Google Drive is not connected");
 
     const boundary = "lovable-" + crypto.randomUUID();
-    const metadata = {
+    // Optional target Drive folder for all site photos. Photos are placed inside this folder.
+    const targetFolderId =
+      process.env["GOOGLE_DRIVE_FOLDER_ID"] || "1PeJrZjAdHwS9kTfRxrPMByqRZvMHIi0e";
+    const metadata: Record<string, unknown> = {
       name: `${data.folderName} - ${data.fileName}`,
       mimeType: data.mimeType,
       description: `Uploaded from the works tracker (${data.folderName})`,
     };
+    if (targetFolderId) {
+      metadata["parents"] = [targetFolderId];
+    }
     const body =
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
       `${JSON.stringify(metadata)}\r\n` +

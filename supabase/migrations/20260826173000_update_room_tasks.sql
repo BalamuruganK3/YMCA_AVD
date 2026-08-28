@@ -108,8 +108,8 @@ BEGIN
       (r_id, 'Civil Work', 'Carpentry Work', 'Gas Pipeline Connectors (Carpentry Work)', 'material', 15);
   END IF;
 
-  -- Bio Lab
-  SELECT id INTO r_id FROM public.rooms WHERE area = 'lab' AND name = 'Bio lab' LIMIT 1;
+  -- 
+  SELECT id INTO r_id FROM public.rooms WHERE area = 'lab' AND name = '' LIMIT 1;
   IF r_id IS NOT NULL THEN
     DELETE FROM public.work_items WHERE room_id = r_id;
     INSERT INTO public.work_items (room_id, group_name, subgroup, title, kind, sort_order) VALUES

@@ -11,6 +11,8 @@ import {
   Eye,
   ChevronLeft,
   ChevronRight,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,6 +32,7 @@ import {
   getItemStatusTone,
   getEffectiveAreaRooms,
   AreaSlug,
+  AREAS,
   getItemWeight,
 } from "@/lib/constants";
 import { getRoomDefaultWorkItems } from "@/lib/room-tasks";
@@ -53,6 +56,16 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/area/$area")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -108,6 +121,26 @@ function AreaPage() {
   const [promptRange, setPromptRange] = useState<number>(50);
   const [promptRemarks, setPromptRemarks] = useState<string>("");
 
+  // Confirmation step before saving an update
+  const [confirmState, setConfirmState] = useState<{
+    item: { id: string; title: string };
+    targetStatus: string;
+    formattedRemarks: string;
+  } | null>(null);
+
+  // Add new work item dialog state (Req 4)
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [newItem, setNewItem] = useState({
+    title: "",
+    group_name: "",
+    subgroup: "",
+    kind: "work" as "work" | "material",
+  });
+  // Which mode each field is in: a predefined value, or "" = "Others…" (custom input)
+  const [headingPick, setHeadingPick] = useState("");
+  const [subheadingPick, setSubheadingPick] = useState("");
+  const [workPick, setWorkPick] = useState("");
+
   // Fullscreen Lightbox Modal state
   const [lightboxPhoto, setLightboxPhoto] = useState<{
     id: string;
@@ -122,7 +155,7 @@ function AreaPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rooms")
-        .select("id, area, name")
+        .select("id, area, name, remarks")
         .order("sort_order");
       if (error) throw error;
       return data ?? [];
@@ -136,6 +169,113 @@ function AreaPage() {
   const roomId = roomParam || rooms[0]?.id || "";
   const roomName = rooms.find((r) => r.id === roomId)?.name ?? "";
 
+  // Overall room remarks (whole-room note) state
+  const currentRoom = rawRooms.find((r) => r.id === roomId);
+  const [roomRemarks, setRoomRemarks] = useState<string>("");
+
+  const saveRoomRemarks = useMutation({
+    mutationFn: async (text: string) => {
+      if (!roomId || roomId.startsWith("virtual-")) {
+        throw new Error("Please open a real room before saving the overall remark.");
+      }
+      const { error } = await supabase
+        .from("rooms")
+        .update({ remarks: text.trim() || null })
+        .eq("id", roomId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      queryClient.invalidateQueries({ queryKey: ["room-remarks"] });
+      toast.success("Overall room remark saved.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Delete the whole room (Req 2) with a two-step "secondary" confirmation.
+  const [roomDeleting, setRoomDeleting] = useState<{
+    id: string;
+    name: string;
+    confirmed: boolean;
+  } | null>(null);
+  const [confirmRoomName, setConfirmRoomName] = useState("");
+  const deleteRoom = useMutation({
+    mutationFn: async (id: string) => {
+      // Read the room's own area (may differ from the slug if it came from a
+      // custom "Others…" area, e.g. "gym-hall").
+      const { data: roomRow } = await supabase
+        .from("rooms")
+        .select("id, area, name")
+        .eq("id", id)
+        .maybeSingle();
+      const roomArea = roomRow?.area ?? area;
+      const roomTypeLabel = areaLabel(roomArea);
+
+      const { data: workIds, error: wErr } = await supabase
+        .from("work_items")
+        .select("id")
+        .eq("room_id", id);
+      if (wErr) throw wErr;
+      const ids = (workIds ?? []).map((row) => row.id);
+      if (ids.length > 0) {
+        await supabase.from("work_photos").delete().in("work_item_id", ids);
+        await supabase.from("work_updates").delete().in("work_item_id", ids);
+        const { error: delErr } = await supabase.from("work_items").delete().in("id", ids);
+        if (delErr) throw delErr;
+      }
+      // Delete the room row itself (the actual room).
+      const { error: roomDelErr } = await supabase.from("rooms").delete().eq("id", id);
+      if (roomDelErr) throw roomDelErr;
+
+      // If this was the last room in a custom area (not a built-in type), the
+      // entire room type / tab is removed permanently (tabs are derived from
+      // rooms, so nothing else needs deleting).
+      const isBuiltinType = AREAS.some((a) => a.slug === roomArea);
+      let lastRemaining = 0;
+      if (!isBuiltinType) {
+        const { count } = await supabase
+          .from("rooms")
+          .select("id", { count: "exact", head: true })
+          .eq("area", roomArea);
+        lastRemaining = count ?? 0;
+      }
+
+      return {
+        name: roomRow?.name ?? "",
+        roomTypeLabel,
+        isBuiltinType,
+        typeRemoved: !isBuiltinType && lastRemaining <= 0,
+      };
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      queryClient.invalidateQueries({ queryKey: ["rooms-progress"] });
+      queryClient.invalidateQueries({ queryKey: ["issue-items"] });
+      queryClient.invalidateQueries({ queryKey: ["last-data-updated"] });
+      queryClient.invalidateQueries({ queryKey: ["custom-areas"] });
+      setRoomDeleting(null);
+      setConfirmRoomName("");
+      if (res.typeRemoved) {
+        toast.success(
+          `Room "${res.name}" deleted. The entire "${res.roomTypeLabel}" room type was removed.`,
+        );
+      } else {
+        toast.success(`Room "${res.name}" deleted.`);
+      }
+      if (typeof window !== "undefined") {
+        navigate({ to: `/area/${area}` as never, replace: true });
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Keep the overall room remark textarea in sync with the selected room.
+  useEffect(() => {
+    setRoomRemarks(currentRoom?.remarks ?? "");
+  }, [currentRoom?.remarks, roomId]);
+
   const { data: items = [] } = useQuery({
     queryKey: ["work-items", roomId],
     enabled: !!roomId,
@@ -147,6 +287,52 @@ function AreaPage() {
         .order("sort_order");
       if (error) throw error;
       return data ?? [];
+    },
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true,
+  });
+
+  // Req 1: predefined heading / subheading / work suggestions for this area's rooms.
+  const { data: workSuggestions = { headings: [], subheadings: [], works: [] } } = useQuery({
+    queryKey: ["work-suggestions", area],
+    queryFn: async () => {
+      const { data: areaRooms, error: roomsErr } = await supabase
+        .from("rooms")
+        .select("id")
+        .eq("area", area);
+      if (roomsErr) throw roomsErr;
+      const ids = (areaRooms ?? []).map((r) => r.id);
+      if (ids.length === 0) return { headings: [], subheadings: [], works: [] };
+      const { data, error } = await supabase
+        .from("work_items")
+        .select("group_name, subgroup, title")
+        .in("room_id", ids);
+      if (error) throw error;
+      const heads = Array.from(
+        new Set(
+          (data ?? [])
+            .map((d) => d.group_name)
+            .filter(Boolean)
+            .map(String),
+        ),
+      ).sort();
+      const subs = Array.from(
+        new Set(
+          (data ?? [])
+            .map((d) => d.subgroup)
+            .filter(Boolean)
+            .map(String),
+        ),
+      ).sort();
+      const wor = Array.from(
+        new Set(
+          (data ?? [])
+            .map((d) => d.title)
+            .filter(Boolean)
+            .map(String),
+        ),
+      ).sort();
+      return { headings: heads, subheadings: subs, works: wor };
     },
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
@@ -200,7 +386,12 @@ function AreaPage() {
 
   const displayItems = useMemo(() => {
     if (items.length > 0) return items;
-    // Fallback if DB sync is in progress or room is virtual
+    // Custom areas (created via "Others…") have no default template to auto-seed.
+    // Show only the real items — otherwise smart-class defaults would pop back in
+    // and make it look like the room "recreates" itself.
+    const isBuiltinArea = AREAS.some((a) => a.slug === area);
+    if (!isBuiltinArea) return [];
+    // Fallback if DB sync is in progress or room is virtual (built-in areas only)
     const defaults = getRoomDefaultWorkItems(area as AreaSlug, roomName);
     return defaults.map((d, i) => ({
       id: `virtual-item-${i}`,
@@ -307,14 +498,194 @@ function AreaPage() {
         ? promptRemarks.trim()
         : `[Range: ${promptRange}%] ${promptRemarks.trim()}`.trim();
 
+    // Ask for confirmation before saving the update (Req 2)
+    setConfirmState({ item, targetStatus, formattedRemarks });
+  };
+
+  const handleConfirmSave = () => {
+    if (!confirmState) return;
+    const { item, targetStatus, formattedRemarks } = confirmState;
     saveStatus.mutate({
       id: item.id,
       status: targetStatus,
       remarks: formattedRemarks,
     });
-
+    setConfirmState(null);
     setPromptState(null);
   };
+
+  // Add a brand new work item to the current room (Req 4)
+  const addWorkItem = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error("Please log in as staff to add a work item.");
+      if (roomId.startsWith("virtual-")) {
+        throw new Error("Please open a saved room before adding a work item.");
+      }
+      const title = newItem.title.trim();
+      const groupName = newItem.group_name.trim();
+      const subgroup = newItem.subgroup.trim();
+      if (!groupName) throw new Error("Main Heading is required.");
+      if (!subgroup) throw new Error("Sub Heading is required.");
+      if (!title) throw new Error("Work / Task is required.");
+      const nextItems = displayItems.length + 1;
+
+      const { data, error } = await supabase
+        .from("work_items")
+        .insert({
+          room_id: roomId,
+          group_name: groupName,
+          subgroup,
+          title,
+          kind: newItem.kind,
+          status: "hold",
+          sort_order: nextItems,
+        })
+        .select("id")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["work-items"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms-progress"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      setAddItemOpen(false);
+      setNewItem({ title: "", group_name: "", subgroup: "", kind: "work" });
+      toast.success("New work item added.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Delete a single work item (Req 3) with confirmation
+  const [deleteItem, setDeleteItem] = useState<{ id: string; title: string } | null>(null);
+  const deleteWorkItem = useMutation({
+    mutationFn: async (id: string) => {
+      // 1. Find the task and its room
+      const { data: itemRow, error: itemErr } = await supabase
+        .from("work_items")
+        .select("room_id")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (itemErr) throw itemErr;
+
+      const roomId = itemRow?.room_id ?? null;
+
+      // 2. Delete task-related photos and progress updates
+      await supabase.from("work_photos").delete().eq("work_item_id", id);
+
+      await supabase.from("work_updates").delete().eq("work_item_id", id);
+
+      // 3. Delete the task
+      const { error: deleteTaskError } = await supabase.from("work_items").delete().eq("id", id);
+
+      if (deleteTaskError) throw deleteTaskError;
+
+      let roomDeleted = false;
+      let roomTypeDeleted = false;
+      let roomTypeLabel = "";
+
+      // 4. Check whether the room has any tasks remaining
+      if (roomId) {
+        const { count, error: countError } = await supabase
+          .from("work_items")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq("room_id", roomId);
+
+        if (countError) throw countError;
+
+        // 5. If zero tasks remain, permanently delete the room
+        if ((count ?? 0) === 0) {
+          const { data: roomRow, error: roomError } = await supabase
+            .from("rooms")
+            .select("id, area, name")
+            .eq("id", roomId)
+            .maybeSingle();
+
+          if (roomError) throw roomError;
+
+          if (roomRow) {
+            roomTypeLabel = areaLabel(roomRow.area);
+
+            // Delete room-level photos if any
+            await supabase
+              .from("work_photos")
+              .delete()
+              .eq("room_id", roomId)
+              .is("work_item_id", null);
+
+            // Delete the room permanently
+            const { error: deleteRoomError } = await supabase
+              .from("rooms")
+              .delete()
+              .eq("id", roomId);
+
+            if (deleteRoomError) throw deleteRoomError;
+
+            roomDeleted = true;
+
+            // 6. Check remaining room count for this room type
+            const { count: remainingRooms, error: roomCountError } = await supabase
+              .from("rooms")
+              .select("id", {
+                count: "exact",
+                head: true,
+              })
+              .eq("area", roomRow.area);
+
+            if (roomCountError) throw roomCountError;
+
+            // 7. If room count is zero, the room type is automatically gone
+            if ((remainingRooms ?? 0) === 0) {
+              roomTypeDeleted = true;
+            }
+          }
+        }
+      }
+
+      return {
+        roomDeleted,
+        roomTypeDeleted,
+        roomTypeLabel,
+      };
+    },
+
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["work-items"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      queryClient.invalidateQueries({ queryKey: ["rooms-progress"] });
+      queryClient.invalidateQueries({ queryKey: ["issue-items"] });
+      queryClient.invalidateQueries({ queryKey: ["custom-areas"] });
+
+      setDeleteItem(null);
+
+      if (result.roomTypeDeleted) {
+        toast.success(
+          `Last task deleted. The room and "${result.roomTypeLabel}" room type were permanently removed.`,
+        );
+      } else if (result.roomDeleted) {
+        toast.success("Last task deleted. The room was permanently removed.");
+      } else {
+        toast.success("Work item deleted.");
+      }
+
+      // If the current room was deleted, return to dashboard
+      if (result.roomDeleted && typeof window !== "undefined") {
+        navigate({
+          to: `/area/${area}` as never,
+          replace: true,
+        });
+      }
+    },
+
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
 
   // Helper to read and compress image client-side if needed (up to 10MB)
   const processImageFile = async (
@@ -383,7 +754,12 @@ function AreaPage() {
       const { base64, dataUrl, mimeType } = await processImageFile(file);
 
       let dbWorkItemId = photoTarget;
-      if (photoTarget && photoTarget.startsWith("virtual-") && roomId && !roomId.startsWith("virtual-")) {
+      if (
+        photoTarget &&
+        photoTarget.startsWith("virtual-") &&
+        roomId &&
+        !roomId.startsWith("virtual-")
+      ) {
         const selected = displayItems.find((i) => i.id === photoTarget);
         if (selected) {
           const { data: realItem } = await supabase
@@ -416,7 +792,8 @@ function AreaPage() {
           try {
             await supabase.from("work_photos").insert({
               room_id: roomId,
-              work_item_id: dbWorkItemId && !dbWorkItemId.startsWith("virtual-") ? dbWorkItemId : null,
+              work_item_id:
+                dbWorkItemId && !dbWorkItemId.startsWith("virtual-") ? dbWorkItemId : null,
               file_name: file.name,
               drive_file_id: null,
               drive_view_url: dataUrl,
@@ -450,6 +827,15 @@ function AreaPage() {
   const targetDeadline = settings?.deadline || "2026-04-15";
   const selected = displayItems.find((i) => i.id === selectedItem) ?? null;
   const pct = getRoomProgress({ name: roomName, work_items: displayItems }, area as AreaSlug);
+  // Photos attached to the room itself (no work item) — for new/custom rooms.
+  const roomPhotos = photos.filter((p) => !p.work_item_id);
+  // True when the current room is the only one left in a custom (non built-in) area,
+  // so deleting it also removes the entire room type / tab permanently.
+  const lastRoomInCustomArea =
+    !!currentRoom &&
+    !roomId.startsWith("virtual-") &&
+    !AREAS.some((a) => a.slug === area) &&
+    rooms.filter((r) => r.id !== currentRoom.id).length <= 0;
 
   return (
     <div className="min-h-screen">
@@ -457,9 +843,15 @@ function AreaPage() {
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
         <div className="flex flex-wrap items-center gap-4">
-          <Button asChild variant="ghost" size="sm">
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 rounded-full border-2 border-white bg-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white transition-all"
+          >
             <Link to="/">
-              <ArrowLeft className="mr-1 h-4 w-4" /> Main dashboard
+              <ArrowLeft className="h-5 w-5" />
+              <span className="sr-only">Main dashboard</span>
             </Link>
           </Button>
           <h1 className="text-3xl uppercase font-display font-semibold">{areaLabel(area)}</h1>
@@ -472,7 +864,7 @@ function AreaPage() {
                 }
               }}
             >
-              <SelectTrigger className="w-56">
+              <SelectTrigger className="w-56 border-2 border-white">
                 <SelectValue placeholder="Select" />
               </SelectTrigger>
               <SelectContent>
@@ -515,7 +907,7 @@ function AreaPage() {
             <Dialog>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
-                  <Images className="mr-1 h-4 w-4" /> Drive photos ({photos.length})
+                  <Images className="mr-1 h-4 w-4" /> Overall photos ({photos.length})
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-h-[80vh] overflow-y-auto">
@@ -617,10 +1009,11 @@ function AreaPage() {
                         setSelectedItem(item.id);
                         setRemarks(item.remarks ?? "");
                       }}
-                      className={`cursor-pointer rounded-lg border p-3 transition ${selectedItem === item.id
-                        ? "border-primary shadow-xs bg-accent/20"
-                        : "border-border hover:border-border/80"
-                        }`}
+                      className={`cursor-pointer rounded-lg border p-3 transition ${
+                        selectedItem === item.id
+                          ? "border-primary shadow-xs bg-accent/20"
+                          : "border-border hover:border-border/80"
+                      }`}
                     >
                       {item.subgroup && (
                         <div className="text-xs font-semibold text-primary/80 uppercase tracking-wider mb-0.5">
@@ -650,10 +1043,11 @@ function AreaPage() {
                                 setSelectedItem(item.id);
                                 openStatusPrompt(item, status);
                               }}
-                              className={`rounded-md border px-3 py-1 text-sm transition hover:border-primary ${active
-                                ? toneClass[statusTone(status)]
-                                : "border-border text-muted-foreground"
-                                }`}
+                              className={`rounded-md border px-3 py-1 text-sm transition hover:border-primary ${
+                                active
+                                  ? toneClass[statusTone(status)]
+                                  : "border-border text-muted-foreground"
+                              }`}
                             >
                               {STATUS_LABEL[status]}
                             </button>
@@ -711,42 +1105,146 @@ function AreaPage() {
               </div>
             ))}
 
-            {!isViewer && (
-              <div className="rounded-lg border border-border p-4">
-                <label className="text-sm font-medium">
-                  Remarks to issue{selected ? `: ${selected.title}` : ""}
-                </label>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <Textarea
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                    placeholder={
-                      selected ? "Describe the issue or note…" : "Select a task above first"
-                    }
-                    disabled={!selected}
-                  />
+            {/* Overall Room Remarks — a whole-room note for any problem the entire room faces */}
+            <div className="rounded-lg border border-border p-4">
+              <label className="text-sm font-medium">
+                Overall Room Remarks
+                {isViewer && currentRoom?.remarks && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    (shared with admin & staff)
+                  </span>
+                )}
+              </label>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <Textarea
+                  value={roomRemarks}
+                  onChange={(e) => setRoomRemarks(e.target.value)}
+                  placeholder={
+                    isViewer
+                      ? currentRoom?.remarks || "No overall room remarks yet."
+                      : "Describe any problem the entire room is facing…"
+                  }
+                  readOnly={isViewer}
+                />
+                {!isViewer && (
                   <Button
                     className="sm:self-end"
-                    disabled={!selected || saveStatus.isPending}
-                    onClick={() =>
-                      selected &&
-                      saveStatus.mutate({
-                        id: selected.id,
-                        status: selected.status,
-                        remarks: remarks.trim() || null,
-                      })
+                    disabled={
+                      !roomId ||
+                      roomId.startsWith("virtual-") ||
+                      saveRoomRemarks.isPending ||
+                      roomRemarks.trim() === (currentRoom?.remarks ?? "")
                     }
+                    onClick={() => saveRoomRemarks.mutate(roomRemarks)}
                   >
-                    Done
+                    {saveRoomRemarks.isPending
+                      ? "Saving…"
+                      : currentRoom?.remarks
+                        ? "Update"
+                        : "Save"}
                   </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Room photos — add a photo to the room itself (works for new/custom rooms too) */}
+            {currentRoom && !roomId.startsWith("virtual-") && (
+              <div className="rounded-lg border border-border p-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">Room Photos</label>
+                  {!isViewer && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={uploading}
+                      onClick={() => {
+                        setPhotoTarget(null);
+                        fileInput.current?.click();
+                      }}
+                    >
+                      <ImagePlus className="mr-1 h-4 w-4" />
+                      {uploading ? "Uploading…" : "Add Photo"}
+                    </Button>
+                  )}
                 </div>
+                {roomPhotos.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">No photos for this room yet.</p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {roomPhotos.map((photo) => (
+                      <button
+                        key={photo.id}
+                        type="button"
+                        onClick={() => setLightboxPhoto(photo)}
+                        className="group/photo relative h-16 w-16 overflow-hidden rounded-lg border border-border bg-surface transition hover:scale-105 hover:border-primary cursor-pointer shadow-sm"
+                        title={photo.file_name}
+                      >
+                        <img
+                          src={photo.drive_thumbnail_url || photo.drive_view_url || ""}
+                          alt={photo.file_name}
+                          className="h-full w-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = "none";
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/photo:opacity-100 flex items-center justify-center transition">
+                          <Eye className="h-4 w-4 text-white" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Delete this room (Req 2) — below the overall remarks, staff only */}
+            {!isViewer && currentRoom && !roomId.startsWith("virtual-") && (
+              <div className="border-t border-border pt-4">
+                <Button
+                  variant="outline"
+                  className="w-full text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200"
+                  disabled={deleteRoom.isPending}
+                  onClick={() => {
+                    setConfirmRoomName("");
+                    setRoomDeleting({
+                      id: currentRoom.id,
+                      name: currentRoom.name,
+                      confirmed: false,
+                    });
+                  }}
+                >
+                  <Trash2 className="mr-1.5 h-4 w-4" />
+                  Delete this room permanently
+                </Button>
+
+                <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
+                  Permanently removes this room, its tasks, photos and progress updates.
+                </p>
               </div>
             )}
           </section>
 
           <aside className="panel h-fit space-y-4 p-5">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h2 className="text-xl uppercase font-display font-semibold">Tasks details</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl uppercase font-display font-semibold">Tasks details</h2>
+                {!isViewer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewItem({ title: "", group_name: "", subgroup: "", kind: "work" });
+                      setHeadingPick("");
+                      setSubheadingPick("");
+                      setWorkPick("");
+                      setAddItemOpen(true);
+                    }}
+                    className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer"
+                    title="Add a new work item to this room"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
               <span className="text-xs font-semibold text-muted-foreground bg-surface px-2.5 py-1 rounded-md border border-border">
                 {displayItems.length} Tasks
               </span>
@@ -767,6 +1265,16 @@ function AreaPage() {
                       return (
                         <li key={item.id} className="text-foreground/90 pl-1">
                           <div className="font-medium inline">{item.title}</div>
+                          {!isViewer && (
+                            <button
+                              type="button"
+                              onClick={() => setDeleteItem({ id: item.id, title: item.title })}
+                              className="ml-1.5 inline-flex items-center rounded p-0.5 text-muted-foreground/60 transition hover:text-red-600"
+                              title="Delete this work item"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
                             <span
                               className={`inline-block rounded px-2 py-0.5 text-[11px] font-semibold border ${toneClass[displayTone] || toneClass[statusTone(statusTone(item.status))]} border-status-progress bg-status-progress/15 text-status-progress`}
@@ -818,8 +1326,12 @@ function AreaPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-muted-foreground uppercase">Target Status:</span>
-                <span className={`rounded-md border px-2.5 py-0.5 text-xs font-bold ${toneClass[statusTone(promptState.targetStatus)]}`}>
+                <span className="text-xs font-semibold text-muted-foreground uppercase">
+                  Target Status:
+                </span>
+                <span
+                  className={`rounded-md border px-2.5 py-0.5 text-xs font-bold ${toneClass[statusTone(promptState.targetStatus)]}`}
+                >
                   {STATUS_LABEL[promptState.targetStatus] || promptState.targetStatus}
                 </span>
               </div>
@@ -827,7 +1339,10 @@ function AreaPage() {
               {/* Range Percentage Slider */}
               <div className="space-y-2 rounded-lg border border-border/80 bg-surface p-3">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="progress-range" className="text-xs font-semibold uppercase text-muted-foreground">
+                  <Label
+                    htmlFor="progress-range"
+                    className="text-xs font-semibold uppercase text-muted-foreground"
+                  >
                     Completion Range
                   </Label>
                   <span className="font-display text-lg font-bold text-primary">
@@ -853,8 +1368,15 @@ function AreaPage() {
 
               {/* Remarks Field */}
               <div className="space-y-1.5">
-                <Label htmlFor="prompt-remarks" className="text-xs font-semibold uppercase text-muted-foreground">
-                  Remarks / Notes {(promptState.targetStatus === "hold" || promptState.targetStatus === "issue") && <span className="text-red-500">*</span>}
+                <Label
+                  htmlFor="prompt-remarks"
+                  className="text-xs font-semibold uppercase text-muted-foreground"
+                >
+                  Remarks / Notes{" "}
+                  {(promptState.targetStatus === "hold" ||
+                    promptState.targetStatus === "issue") && (
+                    <span className="text-red-500">*</span>
+                  )}
                 </Label>
                 <Textarea
                   id="prompt-remarks"
@@ -874,7 +1396,11 @@ function AreaPage() {
           )}
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setPromptState(null)} disabled={saveStatus.isPending}>
+            <Button
+              variant="outline"
+              onClick={() => setPromptState(null)}
+              disabled={saveStatus.isPending}
+            >
               Cancel
             </Button>
             <Button onClick={handlePromptSave} disabled={saveStatus.isPending}>
@@ -883,6 +1409,309 @@ function AreaPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Save Update Confirmation Modal (Req 2) */}
+      <Dialog open={!!confirmState} onOpenChange={(open) => !open && setConfirmState(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <span>Confirm Update</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          {confirmState && (
+            <div className="space-y-3 py-2 text-sm">
+              <p>
+                Save "
+                <span className="font-semibold text-foreground">{confirmState.item.title}</span>" as{" "}
+                <span
+                  className={`rounded-md border px-2 py-0.5 text-xs font-bold ${toneClass[statusTone(confirmState.targetStatus)]}`}
+                >
+                  {STATUS_LABEL[confirmState.targetStatus] || confirmState.targetStatus}
+                </span>
+                ?
+              </p>
+              <p className="text-muted-foreground">
+                This will be recorded as an update for this task and shown to the admin view.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setConfirmState(null)}
+              disabled={saveStatus.isPending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmSave} disabled={saveStatus.isPending}>
+              {saveStatus.isPending ? "Saving…" : "Yes, Save Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add New Work Item Dialog (Req 4) */}
+      <Dialog open={addItemOpen} onOpenChange={(open) => !open && setAddItemOpen(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg">Add New Work Item</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="ni-group"
+                className="text-xs font-semibold uppercase text-muted-foreground"
+              >
+                Main Heading <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={
+                  workSuggestions.headings.includes(newItem.group_name) ? newItem.group_name : ""
+                }
+                onValueChange={(v) => {
+                  setHeadingPick(v);
+                  setNewItem((prev) => ({ ...prev, group_name: v }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select heading or Others…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workSuggestions.headings.map((h) => (
+                    <SelectItem key={h} value={h}>
+                      {h}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="">Others…</SelectItem>
+                </SelectContent>
+              </Select>
+              {!workSuggestions.headings.includes(newItem.group_name) && (
+                <Input
+                  id="ni-group"
+                  value={newItem.group_name}
+                  onChange={(e) => setNewItem((prev) => ({ ...prev, group_name: e.target.value }))}
+                  placeholder="e.g. Civil Work, Electrical Work, Crafts"
+                />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="ni-sub"
+                className="text-xs font-semibold uppercase text-muted-foreground"
+              >
+                Sub Heading <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={
+                  workSuggestions.subheadings.includes(newItem.subgroup) ? newItem.subgroup : ""
+                }
+                onValueChange={(v) => {
+                  setSubheadingPick(v);
+                  setNewItem((prev) => ({ ...prev, subgroup: v }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select sub heading or Others…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workSuggestions.subheadings.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="">Others…</SelectItem>
+                </SelectContent>
+              </Select>
+              {!workSuggestions.subheadings.includes(newItem.subgroup) && (
+                <Input
+                  id="ni-sub"
+                  value={newItem.subgroup}
+                  onChange={(e) => setNewItem((prev) => ({ ...prev, subgroup: e.target.value }))}
+                  placeholder="e.g. False Ceiling, Wall Painting"
+                />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="ni-title"
+                className="text-xs font-semibold uppercase text-muted-foreground"
+              >
+                Work / Task <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={workSuggestions.works.includes(newItem.title) ? newItem.title : ""}
+                onValueChange={(v) => {
+                  setWorkPick(v);
+                  setNewItem((prev) => ({ ...prev, title: v }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select work or Others…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workSuggestions.works.map((w) => (
+                    <SelectItem key={w} value={w}>
+                      {w}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="">Others…</SelectItem>
+                </SelectContent>
+              </Select>
+              {!workSuggestions.works.includes(newItem.title) && (
+                <Input
+                  id="ni-title"
+                  value={newItem.title}
+                  onChange={(e) => setNewItem((prev) => ({ ...prev, title: e.target.value }))}
+                  placeholder="e.g. Plain false ceiling, Zebra blind"
+                />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">
+                Action <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={newItem.kind}
+                onValueChange={(v) => setNewItem({ ...newItem, kind: v as "work" | "material" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="work">
+                    Work — Hold / In-Progress / Completed / Issue / Photo
+                  </SelectItem>
+                  <SelectItem value="material">
+                    Material — Ordered / Received / Supplied / Installed / Photo
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Example: Heading “Civil Work”, Sub heading “False Ceiling”, Work “Plain false
+              ceiling”, Action “Work”.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setAddItemOpen(false)}
+              disabled={addWorkItem.isPending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => addWorkItem.mutate()} disabled={addWorkItem.isPending}>
+              {addWorkItem.isPending ? "Adding…" : "Add Work Item"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Work Item Confirmation (Req 3) */}
+      <AlertDialog open={!!deleteItem} onOpenChange={(o) => !o && setDeleteItem(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this work item?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleteItem?.title ?? ""}” and its photos/updates will be permanently removed from
+              this room. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteWorkItem.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={deleteWorkItem.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteItem) deleteWorkItem.mutate(deleteItem.id);
+              }}
+            >
+              {deleteWorkItem.isPending ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Room — Step 1: primary confirmation (Req 2) */}
+      <AlertDialog
+        open={!!roomDeleting && !roomDeleting.confirmed}
+        onOpenChange={(o) => !o && setRoomDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this room?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{roomDeleting?.name ?? ""}” and all its works, photos and progress updates will be
+              permanently removed. This cannot be undone.
+              {lastRoomInCustomArea && (
+                <span className="mt-1 block text-red-600">
+                  This is the last room in this room type. Deleting it will permanently remove the
+                  room type from the dashboard because its room count will become 0.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRoom.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={deleteRoom.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                setRoomDeleting((prev) => (prev ? { ...prev, confirmed: true } : prev));
+              }}
+            >
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Room — Step 2: secondary confirmation (type the room name) */}
+      <AlertDialog
+        open={!!roomDeleting && roomDeleting.confirmed}
+        onOpenChange={(o) => !o && setRoomDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Final confirmation</AlertDialogTitle>
+            <AlertDialogDescription>
+              Type the room name <b>“{roomDeleting?.name ?? ""}”</b> below to permanently delete it.
+              {lastRoomInCustomArea && (
+                <span className="mt-1 block text-red-600">
+                  This removes the entire “{areaLabel(area)}” room type permanently.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-1">
+            <Input
+              value={confirmRoomName}
+              onChange={(e) => setConfirmRoomName(e.target.value)}
+              placeholder={roomDeleting?.name ?? ""}
+              autoFocus
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRoom.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 text-white hover:bg-red-700"
+              disabled={
+                deleteRoom.isPending || confirmRoomName.trim() !== (roomDeleting?.name ?? "")
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                if (roomDeleting) deleteRoom.mutate(roomDeleting.id);
+              }}
+            >
+              {deleteRoom.isPending ? "Deleting…" : "Delete permanently"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Fullscreen Photo Lightbox Modal with Faded/Blurred Background */}
       {lightboxPhoto && (
