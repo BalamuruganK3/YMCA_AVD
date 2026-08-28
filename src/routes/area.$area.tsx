@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import {
   ArrowLeft,
-  ImagePlus,
   Images,
   X,
   ExternalLink,
@@ -16,7 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { uploadWorkPhoto } from "@/lib/drive.functions";
+import { convertImageToWebp, uploadWorkPhotoWebp } from "@/lib/photo-upload";
 import { saveWorkItemStatusClient } from "@/lib/save-work-item";
 import { AppHeader, useSettings, daysLeft } from "@/components/AppHeader";
 import { IssueDock } from "@/components/IssueDock";
@@ -36,6 +34,7 @@ import {
   getItemWeight,
 } from "@/lib/constants";
 import { getRoomDefaultWorkItems } from "@/lib/room-tasks";
+import { toAllCaps, toTitleCase } from "@/lib/utils";
 import {
   OVERALL_REMARKS_TITLE,
   deleteRoomPermanently,
@@ -121,7 +120,6 @@ function AreaPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [photoTarget, setPhotoTarget] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const upload = useServerFn(uploadWorkPhoto);
 
   // Modal dialog state for status updates & range fixing
   const [promptState, setPromptState] = useState<StatusPromptState | null>(null);
@@ -447,9 +445,9 @@ function AreaPage() {
       if (roomId.startsWith("virtual-")) {
         throw new Error("Please open a saved room before adding a work item.");
       }
-      const title = newItem.title.trim();
-      const groupName = newItem.group_name.trim();
-      const subgroup = newItem.subgroup.trim();
+      const title = toTitleCase(newItem.title);
+      const groupName = toAllCaps(newItem.group_name);
+      const subgroup = toTitleCase(newItem.subgroup);
       if (!groupName) throw new Error("Main Heading is required.");
       if (!subgroup) throw new Error("Sub Heading is required.");
       if (!title) throw new Error("Work / Task is required.");
@@ -538,127 +536,57 @@ function AreaPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  // Helper to read and compress image client-side if needed (up to 10MB)
-  const processImageFile = async (
-    file: File,
-  ): Promise<{ base64: string; dataUrl: string; mimeType: string }> => {
-    return new Promise((resolve, reject) => {
-      // If already small (< 1MB), read directly
-      if (file.size < 1024 * 1024) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = String(reader.result);
-          const base64 = dataUrl.split(",")[1] ?? "";
-          resolve({ base64, dataUrl, mimeType: file.type || "image/jpeg" });
-        };
-        reader.onerror = () => reject(new Error("Could not read file"));
-        reader.readAsDataURL(file);
-        return;
-      }
-
-      // For larger files up to 10MB, downscale to max 1920px dimensions to ensure fast & reliable upload
-      const img = new Image();
-      const objectUrl = URL.createObjectURL(file);
-      img.onload = () => {
-        URL.revokeObjectURL(objectUrl);
-        const maxDim = 1920;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Failed to process image"));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-        const base64 = dataUrl.split(",")[1] ?? "";
-        resolve({ base64, dataUrl, mimeType: "image/jpeg" });
-      };
-      img.onerror = () => reject(new Error("Invalid image format"));
-      img.src = objectUrl;
-    });
-  };
-
   const onPickFile = async (file: File) => {
-    if (!roomId) return;
+    if (!roomId || roomId.startsWith("virtual-")) {
+      toast.error("Please open a saved room before adding a photo.");
+      return;
+    }
+    if (!user) {
+      toast.error("Please log in as staff to upload photos.");
+      return;
+    }
 
-    // Check maximum 10MB limit
     const MAX_FILE_SIZE = 10 * 1024 * 1024;
     if (file.size > MAX_FILE_SIZE) {
       toast.error("File exceeds 10 MB limit. Please select a photo under 10 MB.");
       return;
     }
 
+    let dbWorkItemId = photoTarget;
+    if (!dbWorkItemId) {
+      toast.error("Use + Photo on a task to attach a photo.");
+      return;
+    }
+    if (photoTarget?.startsWith("virtual-")) {
+      const selectedTask = displayItems.find((i) => i.id === photoTarget);
+      if (selectedTask) {
+        const { data: realItem } = await supabase
+          .from("work_items")
+          .select("id")
+          .eq("room_id", roomId)
+          .eq("title", selectedTask.title)
+          .maybeSingle();
+        if (realItem) dbWorkItemId = realItem.id;
+      }
+    }
+    if (!dbWorkItemId || dbWorkItemId.startsWith("virtual-")) {
+      toast.error("This task is not saved yet. Try again after the room loads.");
+      return;
+    }
+
     setUploading(true);
     try {
-      const { base64, dataUrl, mimeType } = await processImageFile(file);
-
-      let dbWorkItemId = photoTarget;
-      if (photoTarget && photoTarget.startsWith("virtual-") && roomId && !roomId.startsWith("virtual-")) {
-        const selected = displayItems.find((i) => i.id === photoTarget);
-        if (selected) {
-          const { data: realItem } = await supabase
-            .from("work_items")
-            .select("id")
-            .eq("room_id", roomId)
-            .eq("title", selected.title)
-            .maybeSingle();
-          if (realItem) dbWorkItemId = realItem.id;
-        }
-      }
-
-      try {
-        await upload({
-          data: {
-            roomId,
-            workItemId: dbWorkItemId,
-            fileName: file.name,
-            mimeType,
-            dataBase64: base64,
-            folderName: `${areaLabel(area)} ${roomName}`,
-            area,
-            roomName,
-          },
-        });
-      } catch (uploadErr) {
-        console.warn("Drive upload fallback to local storage:", uploadErr);
-        // Fallback: direct insert to work_photos in Supabase
-        if (user && roomId && !roomId.startsWith("virtual-")) {
-          try {
-            await supabase.from("work_photos").insert({
-              room_id: roomId,
-              work_item_id: dbWorkItemId && !dbWorkItemId.startsWith("virtual-") ? dbWorkItemId : null,
-              file_name: file.name,
-              drive_file_id: null,
-              drive_view_url: dataUrl,
-              drive_thumbnail_url: dataUrl,
-              user_id: user.id,
-            });
-          } catch (photoErr) {
-            console.warn("work_photos table error:", photoErr);
-            toast.success("Photo processed");
-            setUploading(false);
-            setPhotoTarget(null);
-            if (fileInput.current) fileInput.current.value = "";
-            return;
-          }
-        }
-      }
-
+      const webp = await convertImageToWebp(file);
+      await uploadWorkPhotoWebp({
+        roomId,
+        workItemId: dbWorkItemId,
+        userId: user.id,
+        originalName: file.name,
+        blob: webp,
+      });
       queryClient.invalidateQueries({ queryKey: ["photos"] });
       queryClient.invalidateQueries({ queryKey: ["photos", roomId] });
-      toast.success("Photo uploaded successfully");
+      toast.success("Photo saved as WebP.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Upload failed");
     } finally {
@@ -672,8 +600,7 @@ function AreaPage() {
   const targetDeadline = settings?.deadline || "2026-04-15";
   const selected = displayItems.find((i) => i.id === selectedItem) ?? null;
   const pct = getRoomProgress({ name: roomName, work_items: displayItems }, area as AreaSlug);
-  // Photos attached to the room itself (no work item) — for new/custom rooms.
-  const roomPhotos = photos.filter((p) => !p.work_item_id);
+  const taskPhotos = photos.filter((p) => !!p.work_item_id);
   // True when the current room is the only one left in a custom (non built-in) area,
   // so deleting it also removes the entire room type / tab permanently.
   const lastRoomInCustomArea =
@@ -752,18 +679,18 @@ function AreaPage() {
             <Dialog>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
-                  <Images className="mr-1 h-4 w-4" /> Overall photos ({photos.length})
+                  <Images className="mr-1 h-4 w-4" /> Overall photos ({taskPhotos.length})
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Photos uploaded for {roomName}</DialogTitle>
                 </DialogHeader>
-                {photos.length === 0 ? (
+                {taskPhotos.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No photos uploaded yet.</p>
                 ) : (
                   <ul className="space-y-2">
-                    {photos.map((photo) => (
+                    {taskPhotos.map((photo) => (
                       <li
                         key={photo.id}
                         className="flex items-center justify-between gap-3 rounded-md border border-border p-2"
@@ -792,14 +719,14 @@ function AreaPage() {
                           >
                             View
                           </button>
-                          {photo.drive_view_url && (
+                          {photo.drive_view_url && !photo.drive_view_url.startsWith("data:") && (
                             <a
                               className="text-xs text-primary hover:underline"
                               href={photo.drive_view_url}
                               target="_blank"
                               rel="noreferrer"
                             >
-                              Drive
+                              Open
                             </a>
                           )}
                         </div>
@@ -809,18 +736,6 @@ function AreaPage() {
                 )}
               </DialogContent>
             </Dialog>
-            {!isViewer && (
-              <Button
-                size="sm"
-                onClick={() => {
-                  setPhotoTarget(selectedItem);
-                  fileInput.current?.click();
-                }}
-                disabled={uploading}
-              >
-                <ImagePlus className="mr-1 h-4 w-4" /> {uploading ? "Uploading…" : "Add photo"}
-              </Button>
-            )}
           </div>
         </div>
 
@@ -986,58 +901,6 @@ function AreaPage() {
                 )}
               </div>
             </div>
-
-            {/* Room photos — add a photo to the room itself (works for new/custom rooms too) */}
-            {currentRoom && !roomId.startsWith("virtual-") && (
-              <div className="rounded-lg border border-border p-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">Room Photos</label>
-                  {!isViewer && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={uploading}
-                      onClick={() => {
-                        setPhotoTarget(null);
-                        fileInput.current?.click();
-                      }}
-                    >
-                      <ImagePlus className="mr-1 h-4 w-4" />
-                      {uploading ? "Uploading…" : "Add Photo"}
-                    </Button>
-                  )}
-                </div>
-                {roomPhotos.length === 0 ? (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    No photos for this room yet.
-                  </p>
-                ) : (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {roomPhotos.map((photo) => (
-                      <button
-                        key={photo.id}
-                        type="button"
-                        onClick={() => setLightboxPhoto(photo)}
-                        className="group/photo relative h-16 w-16 overflow-hidden rounded-lg border border-border bg-surface transition hover:scale-105 hover:border-primary cursor-pointer shadow-sm"
-                        title={photo.file_name}
-                      >
-                        <img
-                          src={photo.drive_thumbnail_url || photo.drive_view_url || ""}
-                          alt={photo.file_name}
-                          className="h-full w-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = "none";
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/photo:opacity-100 flex items-center justify-center transition">
-                          <Eye className="h-4 w-4 text-white" />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Delete this room (Req 2) — below the overall remarks, staff only */}
             {!isViewer && currentRoom && !roomId.startsWith("virtual-") && (
@@ -1579,14 +1442,14 @@ function AreaPage() {
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                {lightboxPhoto.drive_view_url && (
+                {lightboxPhoto.drive_view_url && !lightboxPhoto.drive_view_url.startsWith("data:") && (
                   <a
                     href={lightboxPhoto.drive_view_url}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-primary hover:underline px-2.5 py-1 rounded-md border border-primary/30 bg-primary/10"
                   >
-                    <span>Open in Drive</span>
+                    <span>Open</span>
                     <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
