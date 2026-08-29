@@ -38,6 +38,24 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
+function pdfImageFormat(dataUrl: string): "PNG" | "JPEG" {
+  return dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+}
+
+function fitPdfImage(naturalW: number, naturalH: number, maxW: number, maxH: number) {
+  const scale = Math.min(maxW / naturalW, maxH / naturalH);
+  return { w: naturalW * scale, h: naturalH * scale };
+}
+
+function loadPdfImageSize(dataUrl: string) {
+  return new Promise<{ w: number; h: number }>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => reject(new Error("Could not read logo size"));
+    img.src = dataUrl;
+  });
+}
+
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -237,6 +255,9 @@ function PrintReportDialog({
         avLogoDataUrl = "";
       }
 
+      const ymcaSize = logoDataUrl ? await loadPdfImageSize(logoDataUrl).catch(() => ({ w: 1, h: 1 })) : null;
+      const avSize = avLogoDataUrl ? await loadPdfImageSize(avLogoDataUrl).catch(() => ({ w: 397, h: 520 })) : null;
+
       const prettyDate = new Date(reportDate + "T00:00:00").toLocaleDateString(undefined, {
         weekday: "long",
         year: "numeric",
@@ -247,33 +268,52 @@ function PrintReportDialog({
 
       const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
+      const headerTop = 14;
+      const ymcaFit = ymcaSize ? fitPdfImage(ymcaSize.w, ymcaSize.h, 48, 48) : { w: 0, h: 0 };
+      // Stacked AV Dynamics mark is 397x520 — keep that ratio, never stretch into a wide box.
+      const avFit = avSize ? fitPdfImage(avSize.w, avSize.h, 50, 64) : { w: 0, h: 0 };
+      const headerBottom = headerTop + Math.max(ymcaFit.h, avFit.h, 48);
+      const tableTop = headerBottom + 22;
+
       const drawHeader = () => {
-        if (logoDataUrl) {
-          doc.addImage(logoDataUrl, "JPEG", 40, 16, 48, 48);
+        if (logoDataUrl && ymcaSize) {
+          doc.addImage(logoDataUrl, pdfImageFormat(logoDataUrl), 40, headerTop, ymcaFit.w, ymcaFit.h);
         }
-        if (avLogoDataUrl) {
-          doc.addImage(avLogoDataUrl, "PNG", pageWidth - 118, 16, 78, 48);
+        if (avLogoDataUrl && avSize) {
+          const avX = pageWidth - 40 - avFit.w;
+          doc.addImage(
+            avLogoDataUrl,
+            pdfImageFormat(avLogoDataUrl),
+            avX,
+            headerTop,
+            avFit.w,
+            avFit.h,
+            undefined,
+            "FAST",
+          );
         }
+        const textX = logoDataUrl ? 40 + ymcaFit.w + 10 : 40;
+        const textMaxW = pageWidth - textX - 40 - (avLogoDataUrl ? avFit.w + 12 : 0);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(13);
-        const nameLines = doc.splitTextToSize(schoolName, avLogoDataUrl ? 560 : 700);
-        doc.text(nameLines, logoDataUrl ? 98 : 40, 34);
+        const nameLines = doc.splitTextToSize(schoolName, textMaxW);
+        doc.text(nameLines, textX, headerTop + 16);
         doc.setFont("helvetica", "normal");
         doc.setFontSize(10);
-        const subtitleY = 34 + nameLines.length * 14;
-        doc.text("Daily Works Progress Report", logoDataUrl ? 98 : 40, subtitleY);
-        doc.text(`As of ${prettyDate}`, logoDataUrl ? 98 : 40, subtitleY + 14);
+        const subtitleY = headerTop + 16 + nameLines.length * 14;
+        doc.text("Daily Works Progress Report", textX, subtitleY);
+        doc.text(`As of ${prettyDate}`, textX, subtitleY + 14);
       };
 
       if (body.length === 0) {
         drawHeader();
         doc.setFontSize(12);
         doc.setFont("helvetica", "italic");
-        doc.text("No rooms or processes were found for this report.", 40, 110);
+        doc.text("No rooms or processes were found for this report.", 40, tableTop + 16);
       } else {
         autoTable(doc, {
-          startY: 88,
-          margin: { top: 88, left: 40, right: 40 },
+          startY: tableTop,
+          margin: { top: tableTop, left: 40, right: 40 },
           head: [["Room Type", "Room", "Heading", "Process", "Status", "% Complete"]],
           body,
           styles: { fontSize: 8, cellPadding: 3 },
