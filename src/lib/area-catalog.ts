@@ -76,38 +76,53 @@ export function buildAreaCatalog(
   const settingBySource = new Map(
     settings.filter((row) => row.source_area).map((row) => [row.source_area as string, row]),
   );
+  const builtinSlugs = new Set(AREAS.map((area) => area.slug));
   const known = new Set<string>();
-  const result: CatalogArea[] = [];
+  const custom: CatalogArea[] = [];
+  const builtins: CatalogArea[] = [];
+
+  const isCustomSlug = (slug: string) => {
+    const overlay = settingByArea.get(slug);
+    if (overlay?.source_area && builtinSlugs.has(overlay.source_area)) return false;
+    return !builtinSlugs.has(slug);
+  };
+
+  const pushArea = (slug: string, fallbackLabel: string, fallbackImage: string, sourceArea: string | null, into: CatalogArea[]) => {
+    if (known.has(slug)) return;
+    const overlay = settingByArea.get(slug);
+    known.add(slug);
+    into.push({
+      slug,
+      label: overlay?.label || fallbackLabel,
+      image: overlay?.image_url || fallbackImage,
+      sourceArea: overlay?.source_area ?? sourceArea,
+    });
+  };
+
+  const customSlugs: string[] = [];
+  for (const room of [...rooms].reverse()) {
+    if (!room.area || !isCustomSlug(room.area) || customSlugs.includes(room.area)) continue;
+    customSlugs.push(room.area);
+  }
+  for (const slug of customSlugs) {
+    const overlay = settingByArea.get(slug);
+    pushArea(slug, overlay?.label || formatAreaLabel(slug), overlay?.image_url || "", overlay?.source_area ?? null, custom);
+  }
 
   for (const area of AREAS) {
     const renamed = settingBySource.get(area.slug);
     const currentSlug = renamed?.area ?? area.slug;
-    if (known.has(currentSlug)) continue;
     const overlay = settingByArea.get(currentSlug) ?? renamed;
-    known.add(currentSlug);
-    result.push({
-      slug: currentSlug,
-      label: overlay?.label || area.label,
-      image: overlay?.image_url || area.image,
-      sourceArea: overlay?.source_area ?? (renamed ? area.slug : null),
-    });
+    pushArea(
+      currentSlug,
+      overlay?.label || area.label,
+      overlay?.image_url || area.image,
+      overlay?.source_area ?? (renamed ? area.slug : null),
+      builtins,
+    );
   }
 
-  const extraSlugs = Array.from(
-    new Set(rooms.map((room) => room.area).filter((area) => area && !known.has(area))),
-  );
-  for (const slug of extraSlugs) {
-    const overlay = settingByArea.get(slug);
-    known.add(slug);
-    result.push({
-      slug,
-      label: overlay?.label || formatAreaLabel(slug),
-      image: overlay?.image_url || "",
-      sourceArea: overlay?.source_area ?? null,
-    });
-  }
-
-  return result;
+  return [...custom, ...builtins];
 }
 
 export async function fetchAreaSettings(): Promise<AreaSettingRow[]> {

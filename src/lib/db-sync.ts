@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
-import { DEFAULT_AREA_ROOMS, AreaSlug } from "./constants";
+import { DEFAULT_AREA_ROOMS, AreaSlug, AREAS, areaLabel } from "./constants";
 import { getRoomDefaultWorkItems } from "./room-tasks";
-import { fetchAreaSettings, retiredBuiltinSlugs } from "./area-catalog";
+import { fetchAreaSettings, retiredBuiltinSlugs, upsertAreaSetting } from "./area-catalog";
 
 let syncInProgress: Promise<void> | null = null;
 let hasSynced = false;
@@ -36,13 +36,20 @@ export async function syncDashboardRooms() {
 
       const settings = await fetchAreaSettings().catch(() => []);
       const retired = retiredBuiltinSlugs(settings);
+      const knownAreas = new Set(settings.map((row) => row.area));
+      const projectAlreadyStarted = roomsList.some((r) => r.area !== "server");
 
-      // 2. Seed default rooms only when an area has none. Never recreate a room
-      // that staff deleted — that would undo "delete permanently".
+      // Seed defaults only on a brand-new project. If staff deleted every Smart Class
+      // (or any other type), that area stays empty after refresh.
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
         if (retired.has(slug)) continue;
         const areaHasRooms = roomsList.some((r) => r.area === slug);
+        if (!areaHasRooms && (projectAlreadyStarted || knownAreas.has(slug))) {
+          continue;
+        }
+
+        let seededThisArea = false;
 
         for (let idx = 0; idx < roomNames.length; idx++) {
           const roomName = roomNames[idx];
@@ -73,6 +80,7 @@ export async function syncDashboardRooms() {
             if (!createErr && created) {
               roomId = created.id;
               justCreated = true;
+              seededThisArea = true;
               roomsList.push({ id: created.id, area: slug, name: roomName });
             }
           }
@@ -88,6 +96,15 @@ export async function syncDashboardRooms() {
               await supabase.from("work_items").insert(toInsert);
             }
           }
+        }
+
+        if (seededThisArea) {
+          await upsertAreaSetting({
+            area: slug,
+            label: AREAS.find((a) => a.slug === slug)?.label ?? areaLabel(slug),
+            source_area: slug,
+          }).catch(() => undefined);
+          knownAreas.add(slug);
         }
       }
 

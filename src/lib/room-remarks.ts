@@ -1,4 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
+import { AREAS, areaLabel } from "@/lib/constants";
+import { upsertAreaSetting } from "@/lib/area-catalog";
 
 /** Hidden work-item used when `rooms.remarks` is not available yet. */
 export const OVERALL_REMARKS_TITLE = "__OVERALL_ROOM_REMARKS__";
@@ -168,10 +170,24 @@ export async function deleteRoomPermanently(roomId: string) {
     .select("id", { count: "exact", head: true })
     .eq("area", roomRow.area);
 
+  const typeRemoved = (remaining ?? 0) === 0;
+  if (typeRemoved) {
+    const isBuiltin = AREAS.some((area) => area.slug === roomRow.area);
+    if (isBuiltin) {
+      await upsertAreaSetting({
+        area: roomRow.area,
+        label: areaLabel(roomRow.area),
+        source_area: roomRow.area,
+      });
+    } else {
+      await supabase.from("area_settings").delete().eq("area", roomRow.area);
+    }
+  }
+
   return {
     name: roomRow.name,
     area: roomRow.area,
     workCount: workCount ?? 0,
-    typeRemoved: (remaining ?? 0) === 0,
+    typeRemoved,
   };
 }
