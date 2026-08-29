@@ -46,8 +46,11 @@ export async function fetchRoomsWithRemarks(): Promise<RoomRow[]> {
 
 export async function saveOverallRoomRemarks(roomId: string, text: string) {
   const remarks = text.trim() || null;
+
   const update = await supabase.from("rooms").update({ remarks }).eq("id", roomId);
-  if (!update.error) return;
+  if (update.error) {
+    throw new Error(update.error.message || "Could not save overall room remarks.");
+  }
 
   const { data: existing } = await supabase
     .from("work_items")
@@ -57,13 +60,21 @@ export async function saveOverallRoomRemarks(roomId: string, text: string) {
     .maybeSingle();
 
   if (existing?.id) {
-    const { error } = await supabase
-      .from("work_items")
-      .update({ remarks, updated_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    if (error) throw new Error(error.message || "Could not save overall room remarks.");
+    if (remarks) {
+      const { error } = await supabase
+        .from("work_items")
+        .update({ remarks, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+      if (error) throw new Error(error.message || "Could not save overall room remarks.");
+    } else {
+      await supabase.from("work_updates").delete().eq("work_item_id", existing.id);
+      const { error } = await supabase.from("work_items").delete().eq("id", existing.id);
+      if (error) throw new Error(error.message || "Could not clear overall room remarks.");
+    }
     return;
   }
+
+  if (!remarks) return;
 
   const { error } = await supabase.from("work_items").insert({
     room_id: roomId,
@@ -92,11 +103,11 @@ export async function fetchOverallRoomRemarksList(): Promise<RoomRow[]> {
     .select("id, name, area, remarks")
     .not("remarks", "is", null);
 
-  const columnRows: RoomRow[] = fromColumn.error
-    ? []
-    : (fromColumn.data ?? [])
-        .filter((r) => (r.remarks ?? "").trim().length > 0)
-        .map((r) => ({ id: r.id, name: r.name, area: r.area, remarks: r.remarks ?? null }));
+  if (!fromColumn.error) {
+    return (fromColumn.data ?? [])
+      .filter((r) => (r.remarks ?? "").trim().length > 0)
+      .map((r) => ({ id: r.id, name: r.name, area: r.area, remarks: r.remarks ?? null }));
+  }
 
   const { data: fallbackItems } = await supabase
     .from("work_items")
@@ -104,7 +115,8 @@ export async function fetchOverallRoomRemarksList(): Promise<RoomRow[]> {
     .eq("title", OVERALL_REMARKS_TITLE)
     .not("remarks", "is", null);
 
-  const seen = new Set(columnRows.map((r) => r.id));
+  const columnRows: RoomRow[] = [];
+  const seen = new Set<string>();
   for (const item of fallbackItems ?? []) {
     const room = relatedRoom(item.rooms);
     if (!room || seen.has(room.id) || !(item.remarks ?? "").trim()) continue;

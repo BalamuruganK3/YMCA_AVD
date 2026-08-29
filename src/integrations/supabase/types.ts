@@ -29,20 +29,50 @@ export type Database = {
         };
         Relationships: [];
       };
+      area_settings: {
+        Row: {
+          area: string;
+          image_url: string | null;
+          label: string;
+          source_area: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          area: string;
+          image_url?: string | null;
+          label: string;
+          source_area?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          area?: string;
+          image_url?: string | null;
+          label?: string;
+          source_area?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       project_settings: {
         Row: {
+          dashboard_subtitle: string;
+          dashboard_title: string;
           deadline: string;
           id: number;
           project_name: string;
           updated_at: string;
         };
         Insert: {
+          dashboard_subtitle?: string;
+          dashboard_title?: string;
           deadline?: string;
           id?: number;
           project_name?: string;
           updated_at?: string;
         };
         Update: {
+          dashboard_subtitle?: string;
+          dashboard_title?: string;
           deadline?: string;
           id?: number;
           project_name?: string;
@@ -101,6 +131,7 @@ export type Database = {
           group_name: string;
           id: string;
           kind: string;
+          quantity: number;
           remarks: string | null;
           room_id: string;
           sort_order: number;
@@ -115,6 +146,7 @@ export type Database = {
           group_name: string;
           id?: string;
           kind?: string;
+          quantity?: number;
           remarks?: string | null;
           room_id: string;
           sort_order?: number;
@@ -129,6 +161,7 @@ export type Database = {
           group_name?: string;
           id?: string;
           kind?: string;
+          quantity?: number;
           remarks?: string | null;
           room_id?: string;
           sort_order?: number;

@@ -62,6 +62,7 @@ export function areaLabel(slug: string) {
 
 export const WORK_STATUSES = ["hold", "in_progress", "completed", "issue"] as const;
 export const MATERIAL_STATUSES = ["ordered", "received", "supplied", "installed"] as const;
+export const PRODUCT_STATUSES = ["good", "damaged", "count_high", "count_low"] as const;
 
 export const STATUS_LABEL: Record<string, string> = {
   hold: "Hold",
@@ -72,6 +73,10 @@ export const STATUS_LABEL: Record<string, string> = {
   received: "Received",
   supplied: "Supplied",
   installed: "Installed",
+  good: "Product Good",
+  damaged: "Product Damaged",
+  count_high: "Count High",
+  count_low: "Count Low",
 };
 
 /** How much a status contributes to the room completion percentage. */
@@ -84,12 +89,16 @@ const STATUS_WEIGHT: Record<string, number> = {
   received: 0.5,
   supplied: 0.75,
   installed: 1,
+  good: 1,
+  damaged: 0,
+  count_high: 1,
+  count_low: 0.5,
 };
 
 export function getItemWeight(item: { status: string; remarks?: string | null }): number {
   const status = item.status;
-  if (status === "hold" || status === "issue") return 0;
-  if (status === "completed" || status === "installed") return 1;
+  if (status === "hold" || status === "issue" || status === "damaged") return 0;
+  if (status === "completed" || status === "installed" || status === "good" || status === "count_high") return 1;
 
   if (item.remarks) {
     const match = item.remarks.match(/\[Range:\s*(\d+)%\]/i);
@@ -104,7 +113,9 @@ export function getItemWeight(item: { status: string; remarks?: string | null })
 }
 
 export function statusesFor(kind: string) {
-  return kind === "material" ? [...MATERIAL_STATUSES] : [...WORK_STATUSES];
+  if (kind === "material") return [...MATERIAL_STATUSES];
+  if (kind === "product") return [...PRODUCT_STATUSES];
+  return [...WORK_STATUSES];
 }
 
 import { getRoomDefaultWorkItems } from "./room-tasks";
@@ -216,8 +227,9 @@ export function getItemStatusTone(
   item: { status: string; remarks?: string | null },
   isAdmin?: boolean,
 ): string {
-  if (item.status === "completed" || item.status === "installed") return "done";
-  if (item.status === "issue") {
+  if (item.status === "completed" || item.status === "installed" || item.status === "good" || item.status === "count_high")
+    return "done";
+  if (item.status === "issue" || item.status === "damaged") {
     return isAdmin ? "hold" : "issue";
   }
   if (item.status === "hold") {
@@ -227,9 +239,9 @@ export function getItemStatusTone(
 }
 
 export function statusTone(status: string) {
-  if (status === "completed" || status === "installed") return "done";
-  if (status === "issue") return "issue";
-  if (status === "hold") return "hold";
+  if (status === "completed" || status === "installed" || status === "good" || status === "count_high") return "done";
+  if (status === "issue" || status === "damaged") return "issue";
+  if (status === "hold" || status === "count_low") return "hold";
   return "progress";
 }
 
