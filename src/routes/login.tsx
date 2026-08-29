@@ -17,7 +17,7 @@ export const Route = createFileRoute("/login")({
       {
         name: "description",
         content:
-          "Sign in to track smart class, lab, staff room and facility fit-out progress, issues and site photos.",
+          "Sign in to track classroom, lab, staff room and facility fit-out progress, issues and site photos.",
       },
       { property: "og:title", content: "AV DYNAMICS PRIVATE LIMITED" },
       {

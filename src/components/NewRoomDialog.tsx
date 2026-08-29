@@ -51,7 +51,7 @@ export function NewRoomDialog() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [areaType, setAreaType] = useState<AreaSlug>("staff_room");
+  const [areaType, setAreaType] = useState<AreaSlug>("classroom");
   const [roomName, setRoomName] = useState("");
   const [roomCount, setRoomCount] = useState(1);
   const [isCustomArea, setIsCustomArea] = useState(false);
@@ -91,7 +91,7 @@ export function NewRoomDialog() {
   ).sort();
 
   const reset = () => {
-    setAreaType("staff_room");
+    setAreaType("classroom");
     setRoomName("");
     setRoomCount(1);
     setIsCustomArea(false);
@@ -167,7 +167,7 @@ export function NewRoomDialog() {
         if (roomErr) throw new Error(roomErr.message || "Failed to create room");
 
         if (useDefaults) {
-          const seedSlug = (AREAS.find((a) => a.slug === target.slug)?.slug ?? target.source ?? "smart_class") as AreaSlug;
+          const seedSlug = (AREAS.find((a) => a.slug === target.slug)?.slug ?? target.source ?? "classroom") as AreaSlug;
           const defaults = getRoomDefaultWorkItems(seedSlug, name);
           if (defaults.length > 0) {
             const { error: itemsErr } = await supabase.from("work_items").insert(

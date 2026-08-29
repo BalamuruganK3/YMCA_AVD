@@ -1411,7 +1411,7 @@ function AreaPage() {
                 id="edit-room-name"
                 value={editRoomName}
                 onChange={(e) => setEditRoomName(e.target.value)}
-                placeholder="e.g. Smart Class 3"
+                placeholder="e.g. 10 A"
               />
             </div>
             {editTasks.map((task, idx) => (

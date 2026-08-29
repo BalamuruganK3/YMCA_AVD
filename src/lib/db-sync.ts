@@ -20,32 +20,54 @@ export async function syncDashboardRooms() {
       if (fetchErr) throw fetchErr;
 
       const roomsList = existingRooms ?? [];
-      const roomsToDelete: string[] = [];
+      const mergeClassAreas = ["class-room", "class_room", "class", "classes", "classrooms"];
+      if (roomsList.some((r) => mergeClassAreas.includes(r.area))) {
+        await supabase.from("rooms").update({ area: "classroom" }).in("area", mergeClassAreas);
+        for (const room of roomsList) {
+          if (mergeClassAreas.includes(room.area)) room.area = "classroom";
+        }
+      }
 
-      // Remove obsolete server rooms only. Staff-created rooms (any name) are preserved
-      // so newly added rooms stay on the dashboard.
+      const roomsToDelete: string[] = [];
       for (const room of roomsList) {
-        if (room.area === "server") {
+        if (room.area === "server" || room.area === "smart_class") {
           roomsToDelete.push(room.id);
         }
       }
 
       if (roomsToDelete.length > 0) {
+        const { data: workIds } = await supabase.from("work_items").select("id").in("room_id", roomsToDelete);
+        const itemIds = (workIds ?? []).map((row) => row.id);
+        if (itemIds.length > 0) {
+          await supabase.from("work_photos").delete().in("work_item_id", itemIds);
+          await supabase.from("work_updates").delete().in("work_item_id", itemIds);
+          await supabase.from("work_items").delete().in("id", itemIds);
+        }
+        await supabase.from("work_photos").delete().in("room_id", roomsToDelete);
         await supabase.from("rooms").delete().in("id", roomsToDelete);
+        await supabase.from("area_settings").delete().eq("area", "smart_class");
+        await supabase.from("area_settings").delete().eq("source_area", "smart_class");
+      }
+
+      for (let i = roomsList.length - 1; i >= 0; i -= 1) {
+        if (roomsList[i] && (roomsList[i]!.area === "server" || roomsList[i]!.area === "smart_class")) {
+          roomsList.splice(i, 1);
+        }
       }
 
       const settings = await fetchAreaSettings().catch(() => []);
       const retired = retiredBuiltinSlugs(settings);
       const knownAreas = new Set(settings.map((row) => row.area));
-      const projectAlreadyStarted = roomsList.some((r) => r.area !== "server");
+      const projectAlreadyStarted = roomsList.length > 0;
 
-      // Seed defaults only on a brand-new project. If staff deleted every Smart Class
-      // (or any other type), that area stays empty after refresh.
+      // Seed defaults only on a brand-new project, except Classrooms which replace Smart Class.
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
         if (retired.has(slug)) continue;
         const areaHasRooms = roomsList.some((r) => r.area === slug);
-        if (!areaHasRooms && (projectAlreadyStarted || knownAreas.has(slug))) {
+        const skipEmpty = !areaHasRooms && (projectAlreadyStarted || knownAreas.has(slug));
+        const seedClassroomsAsReplacement = slug === "classroom" && !areaHasRooms && !knownAreas.has("classroom");
+        if (skipEmpty && !seedClassroomsAsReplacement) {
           continue;
         }
 

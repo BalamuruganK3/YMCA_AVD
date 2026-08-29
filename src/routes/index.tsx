@@ -63,7 +63,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Live completion percentages for every smart class, lab, staff room, control room and facility areas, with open issues and the project countdown.",
+          "Live completion percentages for every classroom, lab, staff room, control room and facility area, with open issues and the project countdown.",
       },
       { property: "og:title", content: "Main Dashboard — AV DYNAMICS PRIVATE LIMITED" },
       {
@@ -365,7 +365,7 @@ function PrintReportDialog({
             onChange={(e) => setReportDate(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            The report follows dashboard room-type order (Smart Classes, Labs, Staff Room, and so on).
+            The report follows dashboard room-type order (Classrooms, Labs, Staff Room, and so on).
             Each room lists its processes and the completion percentage as of this date. Rooms with no
             updates on this date keep their last saved progress from previous days.
           </p>
