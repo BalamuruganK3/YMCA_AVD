@@ -12,6 +12,7 @@ import {
   Plus,
   Trash2,
   Package,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,7 +37,7 @@ import {
 } from "@/lib/constants";
 import { getRoomDefaultWorkItems } from "@/lib/room-tasks";
 import { toAllCaps, toTitleCase } from "@/lib/utils";
-import { formatAreaLabel } from "@/lib/area-catalog";
+import { formatAreaLabel, formatRoomName } from "@/lib/area-catalog";
 import {
   OVERALL_REMARKS_TITLE,
   deleteRoomPermanently,
@@ -151,6 +152,11 @@ function AreaPage() {
   const [headingPick, setHeadingPick] = useState("");
   const [subheadingPick, setSubheadingPick] = useState("");
   const [workPick, setWorkPick] = useState("");
+  const [editRoomOpen, setEditRoomOpen] = useState(false);
+  const [editRoomName, setEditRoomName] = useState("");
+  const [editTasks, setEditTasks] = useState<
+    { id: string; group_name: string; subgroup: string; title: string }[]
+  >([]);
 
   // Fullscreen Lightbox Modal state
   const [lightboxPhoto, setLightboxPhoto] = useState<{
@@ -264,8 +270,7 @@ function AreaPage() {
     refetchIntervalInBackground: true,
   });
 
-  // Req 1: predefined heading / subheading / work suggestions for this area's rooms.
-  const { data: workSuggestions = { headings: [], subheadings: [], works: [] } } = useQuery({
+  const { data: workSuggestionRows = [] } = useQuery({
     queryKey: ["work-suggestions", area],
     queryFn: async () => {
       const { data: areaRooms, error: roomsErr } = await supabase
@@ -274,17 +279,13 @@ function AreaPage() {
         .eq("area", area);
       if (roomsErr) throw roomsErr;
       const ids = (areaRooms ?? []).map((r) => r.id);
-      if (ids.length === 0) return { headings: [], subheadings: [], works: [] };
+      if (ids.length === 0) return [];
       const { data, error } = await supabase
         .from("work_items")
         .select("group_name, subgroup, title")
         .in("room_id", ids);
       if (error) throw error;
-      const rows = (data ?? []).filter((d) => !isOverallRemarksItem(d));
-      const heads = Array.from(new Set(rows.map((d) => d.group_name).filter(Boolean).map(String))).sort();
-      const subs = Array.from(new Set(rows.map((d) => d.subgroup).filter(Boolean).map(String))).sort();
-      const wor = Array.from(new Set(rows.map((d) => d.title).filter(Boolean).map(String))).sort();
-      return { headings: heads, subheadings: subs, works: wor };
+      return (data ?? []).filter((d) => !isOverallRemarksItem(d));
     },
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
@@ -357,14 +358,70 @@ function AreaPage() {
     }));
   }, [items, area, roomName, roomId]);
 
+  const catalogRows = useMemo(() => {
+    return [
+      ...workSuggestionRows,
+      ...displayItems.map((item) => ({
+        group_name: item.group_name,
+        subgroup: item.subgroup,
+        title: item.title,
+      })),
+    ];
+  }, [workSuggestionRows, displayItems]);
+
+  const headingOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(catalogRows.map((row) => toAllCaps(String(row.group_name ?? ""))).filter(Boolean)),
+      ).sort(),
+    [catalogRows],
+  );
+
+  const selectedHeading = toAllCaps(newItem.group_name);
+  const selectedSubheading = toTitleCase(newItem.subgroup);
+
+  const subheadingOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          catalogRows
+            .filter((row) => toAllCaps(String(row.group_name ?? "")) === selectedHeading)
+            .map((row) => toTitleCase(String(row.subgroup ?? "")))
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [catalogRows, selectedHeading],
+  );
+
+  const workOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          catalogRows
+            .filter(
+              (row) =>
+                toAllCaps(String(row.group_name ?? "")) === selectedHeading &&
+                toTitleCase(String(row.subgroup ?? "")) === selectedSubheading,
+            )
+            .map((row) => toTitleCase(String(row.title ?? "")))
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [catalogRows, selectedHeading, selectedSubheading],
+  );
+
   const grouped = useMemo(() => {
-    const map = new Map<string, typeof displayItems>();
+    const headingMap = new Map<string, Map<string, typeof displayItems>>();
     for (const item of displayItems) {
-      const list = map.get(item.group_name) ?? [];
+      const heading = toAllCaps(item.group_name) || "OTHER";
+      const sub = toTitleCase(item.subgroup ?? "");
+      const subs = headingMap.get(heading) ?? new Map<string, typeof displayItems>();
+      const list = subs.get(sub) ?? [];
       list.push(item);
-      map.set(item.group_name, list);
+      subs.set(sub, list);
+      headingMap.set(heading, subs);
     }
-    return [...map.entries()];
+    return [...headingMap.entries()].map(([heading, subs]) => [heading, [...subs.entries()]] as const);
   }, [displayItems]);
 
   const saveStatus = useMutation({
@@ -468,16 +525,15 @@ function AreaPage() {
       const groupName = toAllCaps(newItem.group_name);
       const subgroup = toTitleCase(newItem.subgroup);
       if (!groupName) throw new Error("Main Heading is required.");
-      if (!subgroup) throw new Error("Sub Heading is required.");
       if (!title) throw new Error("Work / Task is required.");
       const qty = Math.max(0, Math.floor(Number(newItem.quantity) || 0));
 
-      const existing = displayItems.find(
-        (item) =>
-          toAllCaps(item.group_name) === groupName &&
-          toTitleCase(item.subgroup ?? "") === subgroup &&
-          toTitleCase(item.title) === title,
-      );
+      const sameHeading = displayItems.filter((item) => toAllCaps(item.group_name) === groupName);
+      const storedHeading = sameHeading[0]?.group_name ?? groupName;
+      const sameSub = sameHeading.filter((item) => toTitleCase(item.subgroup ?? "") === subgroup);
+      const storedSub = subgroup ? (sameSub[0]?.subgroup ?? subgroup) : (sameSub[0]?.subgroup ?? null);
+
+      const existing = sameSub.find((item) => toTitleCase(item.title) === title);
       if (existing && !existing.id.startsWith("virtual-")) {
         if (newItem.kind === "product" || existing.kind === "product") {
           const nextQty = (existing.quantity ?? 0) + (qty || 1);
@@ -490,7 +546,7 @@ function AreaPage() {
             })
             .eq("id", existing.id);
           if (error) throw error;
-          return { merged: true };
+          return { merged: true, nested: true };
         }
         throw new Error("This heading, subheading and work already exist in this room.");
       }
@@ -500,8 +556,8 @@ function AreaPage() {
         .from("work_items")
         .insert({
           room_id: roomId,
-          group_name: groupName,
-          subgroup,
+          group_name: storedHeading,
+          subgroup: storedSub,
           title,
           kind: newItem.kind,
           status: newItem.kind === "product" ? "good" : "hold",
@@ -511,7 +567,7 @@ function AreaPage() {
         .select("id")
         .single();
       if (error) throw error;
-      return { merged: false, data };
+      return { merged: false, nested: sameHeading.length > 0, data };
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["work-items"] });
@@ -521,7 +577,59 @@ function AreaPage() {
       setAddItemOpen(false);
       setConfirmAdd(false);
       setNewItem({ title: "", group_name: "", subgroup: "", kind: "work", quantity: 1 });
-      toast.success(res.merged ? "Added to the existing task." : "New item added.");
+      toast.success(
+        res.merged
+          ? "Added to the existing task."
+          : res.nested
+            ? "Added under the existing heading."
+            : "New item added.",
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const saveRoomAndTasks = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error("Please log in as staff to edit this room.");
+      if (!roomId || roomId.startsWith("virtual-")) {
+        throw new Error("Please open a saved room before editing.");
+      }
+      const nextName = formatRoomName(editRoomName);
+      if (!nextName) throw new Error("Room name is required.");
+      const nameTaken = rooms.some(
+        (room) => room.id !== roomId && formatRoomName(room.name) === nextName,
+      );
+      if (nameTaken) throw new Error("A room with this name already exists in this type.");
+
+      const { error: roomErr } = await supabase.from("rooms").update({ name: nextName }).eq("id", roomId);
+      if (roomErr) throw roomErr;
+
+      for (const task of editTasks) {
+        const groupName = toAllCaps(task.group_name);
+        const subgroup = toTitleCase(task.subgroup);
+        const title = toTitleCase(task.title);
+        if (!groupName || !title) {
+          throw new Error("Every task needs a heading and work. Subheading can be left blank.");
+        }
+        const { error } = await supabase
+          .from("work_items")
+          .update({
+            group_name: groupName,
+            subgroup: subgroup || null,
+            title,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", task.id);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["work-items"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms-progress"] });
+      queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      queryClient.invalidateQueries({ queryKey: ["work-suggestions", area] });
+      setEditRoomOpen(false);
+      toast.success("Room and tasks updated.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -812,12 +920,19 @@ function AreaPage() {
 
         <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
           <section className="panel space-y-5 p-5">
-            {grouped.map(([group, groupItems]) => (
+            {grouped.map(([group, subgroups]) => (
               <div key={group} className="space-y-3">
                 <h2 className="text-xl uppercase text-primary font-display font-semibold">
                   {group}
                 </h2>
-                {groupItems.map((item) => {
+                {subgroups.map(([sub, groupItems]) => (
+                  <div key={`${group}-${sub || "none"}`} className="space-y-3">
+                    {sub ? (
+                      <div className="text-xs font-semibold text-primary/80 uppercase tracking-wider">
+                        {sub}
+                      </div>
+                    ) : null}
+                    {groupItems.map((item) => {
                   const itemPhotos = photos.filter((p) => p.work_item_id === item.id);
                   const displayStatus = getItemDisplayStatus(item, isViewer);
                   const displayTone = getItemStatusTone(item, isViewer);
@@ -834,11 +949,6 @@ function AreaPage() {
                         : "border-border hover:border-border/80"
                         }`}
                     >
-                      {item.subgroup && (
-                        <div className="text-xs font-semibold text-primary/80 uppercase tracking-wider mb-0.5">
-                          {item.subgroup}
-                        </div>
-                      )}
                       <div className="font-medium text-foreground">
                         {item.title}
                         {item.kind === "product" && (
@@ -927,6 +1037,8 @@ function AreaPage() {
                     </div>
                   );
                 })}
+                  </div>
+                ))}
               </div>
             ))}
 
@@ -1010,6 +1122,31 @@ function AreaPage() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (!roomId || roomId.startsWith("virtual-")) {
+                          toast.error("Open a saved room before editing.");
+                          return;
+                        }
+                        setEditRoomName(roomName);
+                        setEditTasks(
+                          displayItems
+                            .filter((item) => !item.id.startsWith("virtual-"))
+                            .map((item) => ({
+                              id: item.id,
+                              group_name: item.group_name,
+                              subgroup: item.subgroup ?? "",
+                              title: item.title,
+                            })),
+                        );
+                        setEditRoomOpen(true);
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer"
+                      title="Edit room name and tasks"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
                         setAddMode("work");
                         setNewItem({ title: "", group_name: "", subgroup: "", kind: "work", quantity: 1 });
                         setHeadingPick("");
@@ -1046,13 +1183,20 @@ function AreaPage() {
             </div>
 
             <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
-              {grouped.map(([group, groupItems], gIdx) => (
+              {grouped.map(([group, subgroups], gIdx) => (
                 <div key={group} className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-primary">
                     {gIdx + 1}. {group}
                   </div>
-                  <ol className="list-decimal space-y-2 pl-4 text-sm">
-                    {groupItems.map((item) => {
+                  {subgroups.map(([sub, groupItems]) => (
+                    <div key={`${group}-${sub || "none"}`} className="space-y-1">
+                      {sub ? (
+                        <div className="pl-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {sub}
+                        </div>
+                      ) : null}
+                      <ol className="list-decimal space-y-2 pl-8 text-sm">
+                        {groupItems.map((item) => {
                       const displayStatus = getItemDisplayStatus(item, isViewer);
                       const displayTone = getItemStatusTone(item, isViewer);
                       const itemPhotos = photos.filter((p) => p.work_item_id === item.id);
@@ -1113,7 +1257,9 @@ function AreaPage() {
                         </li>
                       );
                     })}
-                  </ol>
+                      </ol>
+                    </div>
+                  ))}
                 </div>
               ))}
 
@@ -1247,6 +1393,91 @@ function AreaPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit room name and task headings */}
+      <Dialog open={editRoomOpen} onOpenChange={(open) => !open && setEditRoomOpen(false)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg">Edit room and tasks</DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              Subheading is optional. Predefined tasks such as Carpentry Work can be saved with heading and work only.
+            </p>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-room-name" className="text-xs font-semibold uppercase text-muted-foreground">
+                Room name
+              </Label>
+              <Input
+                id="edit-room-name"
+                value={editRoomName}
+                onChange={(e) => setEditRoomName(e.target.value)}
+                placeholder="e.g. Smart Class 3"
+              />
+            </div>
+            {editTasks.map((task, idx) => (
+              <div key={task.id} className="space-y-2 rounded-lg border border-border p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Task {idx + 1}
+                </p>
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                    Heading <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    value={task.group_name}
+                    onChange={(e) =>
+                      setEditTasks((prev) =>
+                        prev.map((row) => (row.id === task.id ? { ...row, group_name: e.target.value } : row)),
+                      )
+                    }
+                    placeholder="Main heading"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                    Sub heading <span className="font-normal normal-case">(optional)</span>
+                  </Label>
+                  <Input
+                    value={task.subgroup}
+                    onChange={(e) =>
+                      setEditTasks((prev) =>
+                        prev.map((row) => (row.id === task.id ? { ...row, subgroup: e.target.value } : row)),
+                      )
+                    }
+                    placeholder="Leave blank if this task has no subheading"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold uppercase text-muted-foreground">
+                    Work <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    value={task.title}
+                    onChange={(e) =>
+                      setEditTasks((prev) =>
+                        prev.map((row) => (row.id === task.id ? { ...row, title: e.target.value } : row)),
+                      )
+                    }
+                    placeholder="Work / task"
+                  />
+                </div>
+              </div>
+            ))}
+            {editTasks.length === 0 && (
+              <p className="text-sm text-muted-foreground">This room has no saved tasks to edit yet.</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditRoomOpen(false)} disabled={saveRoomAndTasks.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={() => saveRoomAndTasks.mutate()} disabled={saveRoomAndTasks.isPending}>
+              {saveRoomAndTasks.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add New Work Item Dialog (Req 4) */}
       <Dialog open={addItemOpen} onOpenChange={(open) => !open && setAddItemOpen(false)}>
         <DialogContent className="max-w-md">
@@ -1261,17 +1492,24 @@ function AreaPage() {
                 Main Heading <span className="text-red-500">*</span>
               </Label>
               <Select
-                value={workSuggestions.headings.includes(newItem.group_name) ? newItem.group_name : "__others"}
+                value={headingOptions.includes(selectedHeading) ? selectedHeading : "__others"}
                 onValueChange={(v) => {
                   setHeadingPick(v);
-                  setNewItem((prev) => ({ ...prev, group_name: v === "__others" ? "" : v }));
+                  setSubheadingPick("");
+                  setWorkPick("");
+                  setNewItem((prev) => ({
+                    ...prev,
+                    group_name: v === "__others" ? "" : v,
+                    subgroup: "",
+                    title: "",
+                  }));
                 }}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select heading or Others…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {workSuggestions.headings.map((h) => (
+                  {headingOptions.map((h) => (
                     <SelectItem key={h} value={h}>
                       {h}
                     </SelectItem>
@@ -1279,31 +1517,45 @@ function AreaPage() {
                   <SelectItem value="__others">Others…</SelectItem>
                 </SelectContent>
               </Select>
-              {!workSuggestions.headings.includes(newItem.group_name) && (
+              {!headingOptions.includes(selectedHeading) && (
                 <Input
                   id="ni-group"
                   value={newItem.group_name}
-                  onChange={(e) => setNewItem((prev) => ({ ...prev, group_name: e.target.value }))}
+                  onChange={(e) =>
+                    setNewItem((prev) => ({ ...prev, group_name: e.target.value, subgroup: "", title: "" }))
+                  }
                   placeholder="e.g. Civil Work, Electrical Work, Crafts"
                 />
               )}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ni-sub" className="text-xs font-semibold uppercase text-muted-foreground">
-                Sub Heading <span className="text-red-500">*</span>
+                Sub Heading <span className="font-normal normal-case">(optional)</span>
               </Label>
               <Select
-                value={workSuggestions.subheadings.includes(newItem.subgroup) ? newItem.subgroup : "__others"}
+                value={
+                  !selectedSubheading
+                    ? "__none"
+                    : subheadingOptions.includes(selectedSubheading)
+                      ? selectedSubheading
+                      : "__others"
+                }
                 onValueChange={(v) => {
                   setSubheadingPick(v);
-                  setNewItem((prev) => ({ ...prev, subgroup: v === "__others" ? "" : v }));
+                  setWorkPick("");
+                  setNewItem((prev) => ({
+                    ...prev,
+                    subgroup: v === "__others" || v === "__none" ? "" : v,
+                    title: "",
+                  }));
                 }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select sub heading or Others…" />
+                  <SelectValue placeholder="Select sub heading or skip…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {workSuggestions.subheadings.map((s) => (
+                  <SelectItem value="__none">No subheading</SelectItem>
+                  {subheadingOptions.map((s) => (
                     <SelectItem key={s} value={s}>
                       {s}
                     </SelectItem>
@@ -1311,11 +1563,11 @@ function AreaPage() {
                   <SelectItem value="__others">Others…</SelectItem>
                 </SelectContent>
               </Select>
-              {!workSuggestions.subheadings.includes(newItem.subgroup) && (
+              {!!selectedSubheading && !subheadingOptions.includes(selectedSubheading) && (
                 <Input
                   id="ni-sub"
                   value={newItem.subgroup}
-                  onChange={(e) => setNewItem((prev) => ({ ...prev, subgroup: e.target.value }))}
+                  onChange={(e) => setNewItem((prev) => ({ ...prev, subgroup: e.target.value, title: "" }))}
                   placeholder="e.g. False Ceiling, Wall Painting"
                 />
               )}
@@ -1325,7 +1577,7 @@ function AreaPage() {
                 Work / Task <span className="text-red-500">*</span>
               </Label>
               <Select
-                value={workSuggestions.works.includes(newItem.title) ? newItem.title : "__others"}
+                value={workOptions.includes(toTitleCase(newItem.title)) ? toTitleCase(newItem.title) : "__others"}
                 onValueChange={(v) => {
                   setWorkPick(v);
                   setNewItem((prev) => ({ ...prev, title: v === "__others" ? "" : v }));
@@ -1335,7 +1587,7 @@ function AreaPage() {
                   <SelectValue placeholder="Select work or Others…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {workSuggestions.works.map((w) => (
+                  {workOptions.map((w) => (
                     <SelectItem key={w} value={w}>
                       {w}
                     </SelectItem>
@@ -1343,7 +1595,7 @@ function AreaPage() {
                   <SelectItem value="__others">Others…</SelectItem>
                 </SelectContent>
               </Select>
-              {!workSuggestions.works.includes(newItem.title) && (
+              {!workOptions.includes(toTitleCase(newItem.title)) && (
                 <Input
                   id="ni-title"
                   value={newItem.title}
@@ -1396,7 +1648,7 @@ function AreaPage() {
               </div>
             )}
             <p className="text-[11px] text-muted-foreground">
-              Same heading, subheading and work is added to the existing task. Text is stored in the correct format.
+              If the heading or subheading already exists, the task is shown in that existing list.
             </p>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -1417,8 +1669,8 @@ function AreaPage() {
             <AlertDialogDescription>
               {toAllCaps(newItem.group_name) || "Heading"} / {toTitleCase(newItem.subgroup) || "Subheading"} /{" "}
               {toTitleCase(newItem.title) || "Work"}
-              {newItem.kind === "product" ? ` · count ${newItem.quantity}` : ""}.
-              If this combination already exists, it is added to the existing item.
+              {newItem.kind === "product" ? ` · count ${newItem.quantity}` : ""}. If this heading or
+              subheading already exists, the task is added to that list.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Calendar, Clock, Pencil, Printer } from "lucide-react";
+import { Clock, Pencil, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -359,17 +359,24 @@ function DashboardPage() {
 
   const saveDashText = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("project_settings")
         .update({
           dashboard_title: titleDraft.trim() || "Dashboard",
           dashboard_subtitle: subtitleDraft,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", 1);
+        .eq("id", 1)
+        .select("deadline, project_name, dashboard_title, dashboard_subtitle")
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        throw new Error("Dashboard text was not saved. Sign in as staff and try again.");
+      }
+      return data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      queryClient.setQueryData(["project-settings"], data);
       queryClient.invalidateQueries({ queryKey: ["project-settings"] });
       setEditingDash(false);
       toast.success("Dashboard text updated.");
@@ -570,12 +577,11 @@ function DashboardPage() {
                 Past Date's History
               </span>
               <div className="flex items-center gap-2 rounded-xl border-2 border-white bg-surface px-3 py-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
                 <Input
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-auto text-sm h-8"
+                  className="w-auto text-sm h-8 text-white"
                 />
                 {selectedDate && (
                   <Button variant="ghost" size="sm" onClick={() => setSelectedDate("")} className="h-8 text-xs">
