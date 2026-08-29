@@ -11,10 +11,11 @@ import {
   ChevronRight,
   Plus,
   Trash2,
+  Package,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { convertImageToWebp, uploadWorkPhotoWebp } from "@/lib/photo-upload";
+import { convertImageToWebp, assertPhotoSize, workPhotoThumbUrl, workPhotoOpenUrl, formatPhotoDate, uploadWorkPhotoWebp } from "@/lib/photo-upload";
 import { saveWorkItemStatusClient } from "@/lib/save-work-item";
 import { AppHeader, useSettings, daysLeft } from "@/components/AppHeader";
 import { IssueDock } from "@/components/IssueDock";
@@ -35,6 +36,7 @@ import {
 } from "@/lib/constants";
 import { getRoomDefaultWorkItems } from "@/lib/room-tasks";
 import { toAllCaps, toTitleCase } from "@/lib/utils";
+import { formatAreaLabel } from "@/lib/area-catalog";
 import {
   OVERALL_REMARKS_TITLE,
   deleteRoomPermanently,
@@ -139,8 +141,12 @@ function AreaPage() {
     title: "",
     group_name: "",
     subgroup: "",
-    kind: "work" as "work" | "material",
+    kind: "work" as "work" | "material" | "product",
+    quantity: 1,
   });
+  const [addMode, setAddMode] = useState<"work" | "product">("work");
+  const [confirmAdd, setConfirmAdd] = useState(false);
+  const [confirmRemarks, setConfirmRemarks] = useState<"save" | "clear" | null>(null);
   // Which mode each field is in: a predefined value, or "" = "Others…" (custom input)
   const [headingPick, setHeadingPick] = useState("");
   const [subheadingPick, setSubheadingPick] = useState("");
@@ -150,6 +156,7 @@ function AreaPage() {
   const [lightboxPhoto, setLightboxPhoto] = useState<{
     id: string;
     file_name: string;
+    drive_file_id?: string | null;
     drive_view_url?: string | null;
     drive_thumbnail_url?: string | null;
     created_at?: string;
@@ -158,9 +165,23 @@ function AreaPage() {
   const { data: rawRooms = [] } = useQuery({
     queryKey: ["rooms", area],
     queryFn: fetchRoomsWithRemarks,
-    refetchInterval: 30_000,
+    refetchInterval: isViewer ? 60_000 : 30_000,
     refetchIntervalInBackground: true,
   });
+
+  const { data: areaSetting } = useQuery({
+    queryKey: ["area-settings", area],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("area_settings")
+        .select("area, label, image_url, source_area")
+        .eq("area", area)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const currentTypeLabel = areaSetting?.label || formatAreaLabel(areaLabel(area));
 
   const rooms = getEffectiveAreaRooms(area as AreaSlug, rawRooms);
 
@@ -176,9 +197,6 @@ function AreaPage() {
       if (!roomId || roomId.startsWith("virtual-")) {
         throw new Error("Please open a real room before saving the overall remark.");
       }
-      if (!text.trim()) {
-        throw new Error("Please enter overall room remarks before saving.");
-      }
       await saveOverallRoomRemarks(roomId, text);
     },
     onSuccess: () => {
@@ -186,7 +204,7 @@ function AreaPage() {
       queryClient.invalidateQueries({ queryKey: ["rooms", area] });
       queryClient.invalidateQueries({ queryKey: ["issues"] });
       queryClient.invalidateQueries({ queryKey: ["work-items", roomId] });
-      toast.success("Overall room remark saved.");
+      toast.success(roomRemarks.trim() ? "Issue text is held for this room." : "Held issue text removed.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -236,7 +254,7 @@ function AreaPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("work_items")
-        .select("id, group_name, subgroup, title, kind, status, remarks, updated_at")
+        .select("id, group_name, subgroup, title, kind, status, remarks, quantity, updated_at")
         .eq("room_id", roomId)
         .order("sort_order");
       if (error) throw error;
@@ -278,7 +296,7 @@ function AreaPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("work_photos")
-        .select("id, file_name, drive_view_url, drive_thumbnail_url, work_item_id, created_at")
+        .select("id, file_name, drive_file_id, drive_view_url, drive_thumbnail_url, work_item_id, created_at")
         .eq("room_id", roomId)
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -334,6 +352,7 @@ function AreaPage() {
       kind: d.kind,
       status: "hold",
       remarks: null,
+      quantity: 0,
       updated_at: new Date().toISOString(),
     }));
   }, [items, area, roomName, roomId]);
@@ -451,8 +470,32 @@ function AreaPage() {
       if (!groupName) throw new Error("Main Heading is required.");
       if (!subgroup) throw new Error("Sub Heading is required.");
       if (!title) throw new Error("Work / Task is required.");
-      const nextItems = displayItems.length + 1;
+      const qty = Math.max(0, Math.floor(Number(newItem.quantity) || 0));
 
+      const existing = displayItems.find(
+        (item) =>
+          toAllCaps(item.group_name) === groupName &&
+          toTitleCase(item.subgroup ?? "") === subgroup &&
+          toTitleCase(item.title) === title,
+      );
+      if (existing && !existing.id.startsWith("virtual-")) {
+        if (newItem.kind === "product" || existing.kind === "product") {
+          const nextQty = (existing.quantity ?? 0) + (qty || 1);
+          const { error } = await supabase
+            .from("work_items")
+            .update({
+              quantity: nextQty,
+              kind: "product",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existing.id);
+          if (error) throw error;
+          return { merged: true };
+        }
+        throw new Error("This heading, subheading and work already exist in this room.");
+      }
+
+      const nextItems = displayItems.length + 1;
       const { data, error } = await supabase
         .from("work_items")
         .insert({
@@ -461,21 +504,24 @@ function AreaPage() {
           subgroup,
           title,
           kind: newItem.kind,
-          status: "hold",
+          status: newItem.kind === "product" ? "good" : "hold",
+          quantity: newItem.kind === "product" ? qty || 1 : 0,
           sort_order: nextItems,
         })
         .select("id")
         .single();
       if (error) throw error;
-      return data;
+      return { merged: false, data };
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["work-items"] });
       queryClient.invalidateQueries({ queryKey: ["rooms-progress"] });
       queryClient.invalidateQueries({ queryKey: ["rooms", area] });
+      queryClient.invalidateQueries({ queryKey: ["work-suggestions", area] });
       setAddItemOpen(false);
-      setNewItem({ title: "", group_name: "", subgroup: "", kind: "work" });
-      toast.success("New work item added.");
+      setConfirmAdd(false);
+      setNewItem({ title: "", group_name: "", subgroup: "", kind: "work", quantity: 1 });
+      toast.success(res.merged ? "Added to the existing task." : "New item added.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -551,6 +597,12 @@ function AreaPage() {
       toast.error("File exceeds 10 MB limit. Please select a photo under 10 MB.");
       return;
     }
+    try {
+      assertPhotoSize(file);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Invalid photo.");
+      return;
+    }
 
     let dbWorkItemId = photoTarget;
     if (!dbWorkItemId) {
@@ -586,7 +638,7 @@ function AreaPage() {
       });
       queryClient.invalidateQueries({ queryKey: ["photos"] });
       queryClient.invalidateQueries({ queryKey: ["photos", roomId] });
-      toast.success("Photo saved as WebP.");
+      toast.success("Photo saved. The link is stored in Supabase.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Upload failed");
     } finally {
@@ -626,51 +678,52 @@ function AreaPage() {
               <span className="sr-only">Main dashboard</span>
             </Link>
           </Button>
-          <h1 className="text-3xl uppercase font-display font-semibold">{areaLabel(area)}</h1>
+          <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center rounded-xl border-2 border-white bg-surface px-3">
+            <span className="truncate font-display text-base uppercase font-semibold leading-none">{currentTypeLabel}</span>
+          </div>
           {rooms.length > 1 ? (
-            <Select
-              value={roomId || "select"}
-              onValueChange={(value) => {
-                if (value && value !== "select") {
-                  navigate({ to: "/area/$area", params: { area }, search: { room: value } });
-                }
-              }}
-            >
-              <SelectTrigger className="w-56 border-2 border-white">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="select" disabled>
-                  Select {areaLabel(area)}
-                </SelectItem>
-                {rooms.map((room) => (
-                  <SelectItem key={room.id} value={room.id}>
-                    {room.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center rounded-xl border-2 border-white bg-surface px-2">
+              <Select
+                value={roomId || "select"}
+                onValueChange={(value) => {
+                  if (value && value !== "select") {
+                    navigate({ to: "/area/$area", params: { area }, search: { room: value } });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 w-full border-0 bg-transparent px-1 shadow-none focus:ring-0">
+                  <SelectValue placeholder="Select room" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rooms.map((room) => (
+                    <SelectItem key={room.id} value={room.id}>
+                      {room.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           ) : (
-            <span className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-muted-foreground">
-              {roomName || rooms[0]?.name}
-            </span>
+            <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center rounded-xl border-2 border-white bg-surface px-3">
+              <span className="truncate font-medium leading-none">{roomName || rooms[0]?.name || "—"}</span>
+            </div>
           )}
 
-          <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5">
-            <CircularProgress value={pct} size={42} strokeWidth={4} />
-            <span className="text-xs font-semibold uppercase text-muted-foreground">
+          <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-xl border-2 border-white bg-surface px-3">
+            <CircularProgress value={pct} size={28} strokeWidth={3} />
+            <span className="text-[11px] font-semibold uppercase text-muted-foreground leading-tight">
               Room Progress
             </span>
           </div>
 
           {targetDeadline && (
-            <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-3.5 py-1.5 shadow-xs">
-              <span className="font-display text-xl font-bold text-primary leading-none">
+            <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-xl border-2 border-white bg-surface px-3">
+              <span className="font-display text-lg font-bold text-primary leading-none">
                 {daysLeft(targetDeadline)}
               </span>
-              <div className="text-[10px] uppercase font-bold text-primary/80 tracking-wider">
+              <span className="text-[11px] uppercase font-bold text-primary/80 tracking-wider leading-tight">
                 {daysLeft(targetDeadline) === 1 ? "Day Left" : "Days Left"}
-              </div>
+              </span>
             </div>
           )}
 
@@ -696,20 +749,27 @@ function AreaPage() {
                         className="flex items-center justify-between gap-3 rounded-md border border-border p-2"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {photo.drive_thumbnail_url && (
+                          {workPhotoThumbUrl(photo) && (
                             <img
-                              src={photo.drive_thumbnail_url}
+                              src={workPhotoThumbUrl(photo)}
                               alt=""
                               className="h-9 w-9 rounded object-cover cursor-pointer"
                               onClick={() => setLightboxPhoto(photo)}
                             />
                           )}
-                          <span
-                            className="truncate text-sm font-medium hover:text-primary cursor-pointer"
-                            onClick={() => setLightboxPhoto(photo)}
-                          >
-                            {photo.file_name}
-                          </span>
+                          <div className="min-w-0">
+                            <span
+                              className="block truncate text-sm font-medium hover:text-primary cursor-pointer"
+                              onClick={() => setLightboxPhoto(photo)}
+                            >
+                              {photo.file_name}
+                            </span>
+                            {photo.created_at && (
+                              <span className="block text-[11px] text-muted-foreground">
+                                {formatPhotoDate(photo.created_at)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
@@ -719,10 +779,10 @@ function AreaPage() {
                           >
                             View
                           </button>
-                          {photo.drive_view_url && !photo.drive_view_url.startsWith("data:") && (
+                          {workPhotoOpenUrl(photo) && (
                             <a
                               className="text-xs text-primary hover:underline"
-                              href={photo.drive_view_url}
+                              href={workPhotoOpenUrl(photo)}
                               target="_blank"
                               rel="noreferrer"
                             >
@@ -779,7 +839,14 @@ function AreaPage() {
                           {item.subgroup}
                         </div>
                       )}
-                      <div className="font-medium text-foreground">{item.title}</div>
+                      <div className="font-medium text-foreground">
+                        {item.title}
+                        {item.kind === "product" && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            · Count {item.quantity ?? 0}
+                          </span>
+                        )}
+                      </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {statusesFor(item.kind).map((status) => {
@@ -835,10 +902,10 @@ function AreaPage() {
                               setLightboxPhoto(photo);
                             }}
                             className="group/photo relative h-8 w-8 overflow-hidden rounded border border-border bg-surface transition hover:scale-105 hover:border-primary cursor-pointer shadow-xs"
-                            title={`Click to view ${photo.file_name}`}
+                            title={`${photo.file_name}${photo.created_at ? ` · ${formatPhotoDate(photo.created_at)}` : ""}`}
                           >
                             <img
-                              src={photo.drive_thumbnail_url || photo.drive_view_url || ""}
+                              src={workPhotoThumbUrl(photo)}
                               alt={photo.file_name}
                               className="h-full w-full object-cover"
                               onError={(e) => {
@@ -865,14 +932,14 @@ function AreaPage() {
 
             {/* Overall Room Remarks — a whole-room note for any problem the entire room faces */}
             <div className="rounded-lg border border-border p-4">
-              <label className="text-sm font-medium">
-                Overall Room Remarks
-                {isViewer && currentRoom?.remarks && (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">
-                    (shared with admin & staff)
-                  </span>
-                )}
-              </label>
+              <label className="text-sm font-medium">Overall Room Remarks</label>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {isViewer
+                  ? currentRoom?.remarks
+                    ? "Open issue for this room (held until staff clears it)."
+                    : "No overall room issue is held right now."
+                  : "If there is an issue, type it here and update — the text stays held. When it is solved, delete that held text and update."}
+              </p>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                 <Textarea
                   value={roomRemarks}
@@ -880,7 +947,9 @@ function AreaPage() {
                   placeholder={
                     isViewer
                       ? currentRoom?.remarks || "No overall room remarks yet."
-                      : "Describe any problem the entire room is facing…"
+                      : currentRoom?.remarks
+                        ? "Held issue text. Remove it and update when solved, or replace it with a new issue."
+                        : "Describe the room issue…"
                   }
                   readOnly={isViewer}
                 />
@@ -891,12 +960,17 @@ function AreaPage() {
                       !roomId ||
                       roomId.startsWith("virtual-") ||
                       saveRoomRemarks.isPending ||
-                      !roomRemarks.trim() ||
                       roomRemarks.trim() === (currentRoom?.remarks ?? "").trim()
                     }
-                    onClick={() => saveRoomRemarks.mutate(roomRemarks)}
+                    onClick={() => setConfirmRemarks(roomRemarks.trim() ? "save" : "clear")}
                   >
-                    {saveRoomRemarks.isPending ? "Saving…" : currentRoom?.remarks ? "Update" : "Save"}
+                    {saveRoomRemarks.isPending
+                      ? "Saving…"
+                      : roomRemarks.trim()
+                        ? currentRoom?.remarks
+                          ? "Update remarks"
+                          : "Hold as issue"
+                        : "Update remarks"}
                   </Button>
                 )}
               </div>
@@ -932,20 +1006,38 @@ function AreaPage() {
               <div className="flex items-center gap-2">
                 <h2 className="text-xl uppercase font-display font-semibold">Tasks details</h2>
                 {!isViewer && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewItem({ title: "", group_name: "", subgroup: "", kind: "work" });
-                      setHeadingPick("");
-                      setSubheadingPick("");
-                      setWorkPick("");
-                      setAddItemOpen(true);
-                    }}
-                    className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer"
-                    title="Add a new work item to this room"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddMode("work");
+                        setNewItem({ title: "", group_name: "", subgroup: "", kind: "work", quantity: 1 });
+                        setHeadingPick("");
+                        setSubheadingPick("");
+                        setWorkPick("");
+                        setAddItemOpen(true);
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition cursor-pointer"
+                      title="Add a work or material task"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddMode("product");
+                        setNewItem({ title: "", group_name: "", subgroup: "", kind: "product", quantity: 1 });
+                        setHeadingPick("");
+                        setSubheadingPick("");
+                        setWorkPick("");
+                        setAddItemOpen(true);
+                      }}
+                      className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition cursor-pointer"
+                      title="Add a product (table, chair, count)"
+                    >
+                      <Package className="h-4 w-4" />
+                    </button>
+                  </>
                 )}
               </div>
               <span className="text-xs font-semibold text-muted-foreground bg-surface px-2.5 py-1 rounded-md border border-border">
@@ -967,7 +1059,10 @@ function AreaPage() {
 
                       return (
                         <li key={item.id} className="text-foreground/90 pl-1">
-                          <div className="font-medium inline">{item.title}</div>
+                          <div className="font-medium inline">
+                            {item.title}
+                            {item.kind === "product" ? ` (${item.quantity ?? 0})` : ""}
+                          </div>
                           {!isViewer && (
                             <button
                               type="button"
@@ -997,6 +1092,24 @@ function AreaPage() {
                               <span className="text-muted-foreground italic">— {item.remarks}</span>
                             )}
                           </div>
+                          {!isViewer && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {statusesFor(item.kind).map((status) => (
+                                <button
+                                  key={status}
+                                  type="button"
+                                  onClick={() => openStatusPrompt(item, status)}
+                                  className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                    item.status === status
+                                      ? toneClass[statusTone(status)]
+                                      : "border-border text-muted-foreground"
+                                  }`}
+                                >
+                                  {STATUS_LABEL[status]}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </li>
                       );
                     })}
@@ -1138,7 +1251,9 @@ function AreaPage() {
       <Dialog open={addItemOpen} onOpenChange={(open) => !open && setAddItemOpen(false)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-lg">Add New Work Item</DialogTitle>
+            <DialogTitle className="text-lg">
+              {addMode === "product" ? "Add Product" : "Add New Work Item"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
@@ -1243,7 +1358,9 @@ function AreaPage() {
               </Label>
               <Select
                 value={newItem.kind}
-                onValueChange={(v) => setNewItem({ ...newItem, kind: v as "work" | "material" })}
+                onValueChange={(v) =>
+                  setNewItem({ ...newItem, kind: v as "work" | "material" | "product" })
+                }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -1255,24 +1372,95 @@ function AreaPage() {
                   <SelectItem value="material">
                     Material — Ordered / Received / Supplied / Installed / Photo
                   </SelectItem>
+                  <SelectItem value="product">
+                    Product — Good / Damaged / Count High / Count Low
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {newItem.kind === "product" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="ni-qty" className="text-xs font-semibold uppercase text-muted-foreground">
+                  Count <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="ni-qty"
+                  type="number"
+                  min={1}
+                  value={newItem.quantity}
+                  onChange={(e) =>
+                    setNewItem((prev) => ({ ...prev, quantity: parseInt(e.target.value, 10) || 1 }))
+                  }
+                  placeholder="e.g. 12 tables"
+                />
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">
-              Example: Heading “Civil Work”, Sub heading “False Ceiling”, Work “Plain false
-              ceiling”, Action “Work”.
+              Same heading, subheading and work is added to the existing task. Text is stored in the correct format.
             </p>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setAddItemOpen(false)} disabled={addWorkItem.isPending}>
               Cancel
             </Button>
-            <Button onClick={() => addWorkItem.mutate()} disabled={addWorkItem.isPending}>
-              {addWorkItem.isPending ? "Adding…" : "Add Work Item"}
+            <Button onClick={() => setConfirmAdd(true)} disabled={addWorkItem.isPending}>
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmAdd} onOpenChange={setConfirmAdd}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{addMode === "product" ? "Add this product?" : "Add this task?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {toAllCaps(newItem.group_name) || "Heading"} / {toTitleCase(newItem.subgroup) || "Subheading"} /{" "}
+              {toTitleCase(newItem.title) || "Work"}
+              {newItem.kind === "product" ? ` · count ${newItem.quantity}` : ""}.
+              If this combination already exists, it is added to the existing item.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                addWorkItem.mutate();
+              }}
+            >
+              {addWorkItem.isPending ? "Adding…" : "Yes, add"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmRemarks} onOpenChange={(o) => !o && setConfirmRemarks(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmRemarks === "clear" ? "Mark this room issue as solved?" : "Save as a room issue?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmRemarks === "clear"
+                ? "The held issue text will be removed and this room will leave the Issues list. You can type a new issue later."
+                : "This text is held as the overall room issue until staff deletes it and updates remarks."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                saveRoomRemarks.mutate(roomRemarks);
+                setConfirmRemarks(null);
+              }}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Work Item Confirmation (Req 3) */}
       <AlertDialog open={!!deleteItem} onOpenChange={(o) => !o && setDeleteItem(null)}>
@@ -1436,15 +1624,15 @@ function AreaPage() {
                 </h3>
                 {lightboxPhoto.created_at && (
                   <p className="text-xs text-muted-foreground">
-                    Uploaded on {new Date(lightboxPhoto.created_at).toLocaleString()}
+                    Uploaded on {formatPhotoDate(lightboxPhoto.created_at)}
                   </p>
                 )}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                {lightboxPhoto.drive_view_url && !lightboxPhoto.drive_view_url.startsWith("data:") && (
+                {workPhotoOpenUrl(lightboxPhoto) && (
                   <a
-                    href={lightboxPhoto.drive_view_url}
+                    href={workPhotoOpenUrl(lightboxPhoto)}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-primary hover:underline px-2.5 py-1 rounded-md border border-primary/30 bg-primary/10"
@@ -1467,7 +1655,7 @@ function AreaPage() {
             {/* High-Resolution Image Preview */}
             <div className="w-full flex items-center justify-center py-4 max-h-[70vh] overflow-hidden">
               <img
-                src={lightboxPhoto.drive_view_url || lightboxPhoto.drive_thumbnail_url || ""}
+                src={workPhotoThumbUrl(lightboxPhoto)}
                 alt={lightboxPhoto.file_name}
                 className="max-h-[65vh] w-auto max-w-full rounded-xl object-contain shadow-md"
               />

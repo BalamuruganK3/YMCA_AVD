@@ -1,6 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 
 export const PHOTO_BUCKET = "work-photos";
+export const AREA_IMAGE_BUCKET = "area-images";
+export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 export async function convertImageToWebp(file: File, quality = 0.82): Promise<Blob> {
   if (file.type && !file.type.startsWith("image/")) {
@@ -49,7 +51,7 @@ export async function uploadWorkPhotoWebp(opts: {
   userId: string;
   originalName: string;
   blob: Blob;
-}): Promise<void> {
+}): Promise<string> {
   const fileName = `${crypto.randomUUID()}.webp`;
   const path = `${opts.roomId}/${opts.workItemId}/${fileName}`;
 
@@ -67,6 +69,10 @@ export async function uploadWorkPhotoWebp(opts: {
 
   const { data } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
   const publicUrl = data.publicUrl;
+  if (!publicUrl) {
+    await supabase.storage.from(PHOTO_BUCKET).remove([path]);
+    throw new Error("Photo uploaded but no public link was returned.");
+  }
   const storedName = opts.originalName.replace(/\.[^.]+$/, "") + ".webp";
 
   const { error: rowErr } = await supabase.from("work_photos").insert({
@@ -82,4 +88,68 @@ export async function uploadWorkPhotoWebp(opts: {
     await supabase.storage.from(PHOTO_BUCKET).remove([path]);
     throw new Error(rowErr.message || "Photo uploaded but could not be recorded.");
   }
+  return publicUrl;
+}
+
+export async function uploadAreaImageWebp(areaSlug: string, originalName: string, blob: Blob): Promise<string> {
+  const path = `${areaSlug}/${crypto.randomUUID()}.webp`;
+  const { error: uploadErr } = await supabase.storage.from(AREA_IMAGE_BUCKET).upload(path, blob, {
+    contentType: "image/webp",
+    upsert: false,
+  });
+  if (uploadErr) {
+    throw new Error(
+      uploadErr.message.includes("Bucket")
+        ? "Room type image storage is not set up. Create a public bucket named area-images in Supabase Storage."
+        : uploadErr.message || "Could not save the room type image.",
+    );
+  }
+  const { data } = supabase.storage.from(AREA_IMAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+export function assertPhotoSize(file: File) {
+  if (file.size > MAX_PHOTO_BYTES) {
+    throw new Error("File exceeds 10 MB limit. Please select a photo under 10 MB.");
+  }
+}
+
+export function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error("Could not read the photo file."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export function workPhotoThumbUrl(photo: {
+  drive_file_id?: string | null;
+  drive_thumbnail_url?: string | null;
+  drive_view_url?: string | null;
+}): string {
+  return photo.drive_thumbnail_url || photo.drive_view_url || "";
+}
+
+export function workPhotoOpenUrl(photo: {
+  drive_file_id?: string | null;
+  drive_view_url?: string | null;
+  drive_thumbnail_url?: string | null;
+}): string {
+  return photo.drive_view_url || photo.drive_thumbnail_url || "";
+}
+
+export function formatPhotoDate(iso?: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

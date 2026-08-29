@@ -19,7 +19,7 @@ export function useSettings() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("project_settings")
-        .select("deadline, project_name")
+        .select("deadline, project_name, dashboard_title, dashboard_subtitle")
         .eq("id", 1)
         .maybeSingle();
       if (error) throw error;

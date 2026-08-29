@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { DEFAULT_AREA_ROOMS, AreaSlug } from "./constants";
 import { getRoomDefaultWorkItems } from "./room-tasks";
+import { fetchAreaSettings, retiredBuiltinSlugs } from "./area-catalog";
 
 let syncInProgress: Promise<void> | null = null;
 let hasSynced = false;
@@ -33,10 +34,14 @@ export async function syncDashboardRooms() {
         await supabase.from("rooms").delete().in("id", roomsToDelete);
       }
 
+      const settings = await fetchAreaSettings().catch(() => []);
+      const retired = retiredBuiltinSlugs(settings);
+
       // 2. Seed default rooms only when an area has none. Never recreate a room
       // that staff deleted — that would undo "delete permanently".
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
+        if (retired.has(slug)) continue;
         const areaHasRooms = roomsList.some((r) => r.area === slug);
 
         for (let idx = 0; idx < roomNames.length; idx++) {

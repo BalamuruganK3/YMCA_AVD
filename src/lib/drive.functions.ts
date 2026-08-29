@@ -69,6 +69,26 @@ export const uploadWorkPhoto = createServerFn({ method: "POST" })
       thumbnailLink?: string;
     };
 
+    try {
+      await fetch(
+        `https://connector-gateway.lovable.dev/google_drive/drive/v3/files/${file.id}/permissions`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${lovableKey}`,
+            "X-Connection-Api-Key": driveKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ role: "reader", type: "anyone" }),
+        },
+      );
+    } catch (shareErr) {
+      console.warn("Drive share permission could not be set:", shareErr);
+    }
+
+    const viewUrl = file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`;
+    const thumbUrl = `https://drive.google.com/thumbnail?id=${file.id}&sz=w1200`;
+
     const { supabase } = context;
     let roomId = data.roomId;
     if ((!roomId || roomId.startsWith("virtual-")) && data.area && data.roomName) {
@@ -101,8 +121,8 @@ export const uploadWorkPhoto = createServerFn({ method: "POST" })
       work_item_id: workItemId,
       file_name: file.name,
       drive_file_id: file.id,
-      drive_view_url: file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`,
-      drive_thumbnail_url: file.thumbnailLink ?? null,
+      drive_view_url: viewUrl,
+      drive_thumbnail_url: thumbUrl,
       user_id: context.userId,
     });
     if (error) throw new Error(error.message);
