@@ -817,24 +817,24 @@ function AreaPage() {
             </div>
           )}
 
-          <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-xl border-2 border-white bg-surface px-3">
-            <CircularProgress value={pct} size={28} strokeWidth={3} />
+          <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-lg bg-surface px-3">
+            <CircularProgress value={pct} size={30} strokeWidth={2} />
             <span className="text-[11px] font-semibold uppercase text-muted-foreground leading-tight">
               Room Progress
             </span>
           </div>
 
-          {targetDeadline && (
+         {/* {targetDeadline && (
             <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-xl border-2 border-white bg-surface px-3">
               <span className="font-display text-lg font-bold text-primary leading-none">
                 {daysLeft(targetDeadline)}
               </span>
               <span className="text-[11px] uppercase font-bold text-primary/80 tracking-wider leading-tight">
-                {daysLeft(targetDeadline) === 1 ? "Day Left" : "Days Left"}
+                {daysLeft(targetDeadline) = : "Days Left"}
               </span>
             </div>
           )}
-
+*/}
           <div className="w-full sm:w-auto flex flex-wrap items-center gap-2 sm:ml-auto justify-start sm:justify-end">
             <IssueDock />
             <Dialog>
