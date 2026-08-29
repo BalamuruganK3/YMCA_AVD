@@ -786,8 +786,8 @@ function AreaPage() {
               <span className="sr-only">Main dashboard</span>
             </Link>
           </Button>
-          <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center rounded-xl border-2 border-white bg-surface px-3">
-            <span className="truncate font-display text-base uppercase font-semibold leading-none">{currentTypeLabel}</span>
+          <div className="flex h-12 w-[8rem] min-w-[8rem] items-center justify-center rounded-xl bg-surface px-3">
+            <span className="truncate font-display text-base uppercase font-bold leading-tight">{currentTypeLabel}</span>
           </div>
           {rooms.length > 1 ? (
             <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center rounded-xl border-2 border-white bg-surface px-2">
