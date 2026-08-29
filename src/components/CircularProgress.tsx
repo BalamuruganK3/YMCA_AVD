@@ -50,7 +50,7 @@ export function CircularProgress({
       {showText && (
         <span
           className={`absolute font-display font-bold leading-none ${colorConfig.text}`}
-          style={{ fontSize: size <= 48 ? "12px" : "14px" }}
+          style={{ fontSize: size <= 48 ? "15.5px" : "14px" }}
         >
           {normalizedValue}%
         </span>

@@ -818,8 +818,8 @@ function AreaPage() {
           )}
 
           <div className="flex h-12 w-[12.5rem] min-w-[12.5rem] items-center justify-center gap-2 rounded-lg bg-surface px-3">
-            <CircularProgress value={pct} size={30} strokeWidth={2} />
-            <span className="text-[11px] font-semibold uppercase text-muted-foreground leading-tight">
+            <CircularProgress value={pct} size={42} strokeWidth={3} />
+            <span className="text-[12px] font-weight-bold uppercase text-muted-foreground leading-tight">
               Room Progress
             </span>
           </div>
