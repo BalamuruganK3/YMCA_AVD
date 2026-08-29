@@ -83,7 +83,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "description",
         content:
-          "Track smart class, lab, staff room and facility fit-out progress, issues and site photos.",
+          "Track classroom, lab, staff room and facility fit-out progress, issues and site photos.",
       },
       { property: "og:title", content: "AV DYNAMICS PRIVATE LIMITED" },
       {

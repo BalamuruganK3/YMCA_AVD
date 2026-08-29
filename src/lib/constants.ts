@@ -1,4 +1,4 @@
-import smartClassImg from "@/assets/area-smart-class.jpg";
+import classroomImg from "@/assets/area-smart-class.jpg";
 import labImg from "@/assets/area-lab.jpg";
 import staffRoomImg from "@/assets/area-staff-room.jpg";
 import serverImg from "@/assets/area-server.jpg";
@@ -11,9 +11,10 @@ import petImg from "@/assets/pet.png";
 import playImg from "@/assets/Play.png";
 import principalImg from "@/assets/Principal.png";
 import recordImg from "@/assets/Record.png";
+import { compareRoomNames } from "@/lib/utils";
 
 export type AreaSlug =
-  | "smart_class"
+  | "classroom"
   | "lab"
   | "staff_room"
   | "control_room"
@@ -26,8 +27,26 @@ export type AreaSlug =
   | "pet_room"
   | "play_area";
 
+export const CLASSROOM_NAMES = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10 A",
+  "10 B",
+  "11 A",
+  "11 B",
+  "12 A",
+  "12 B",
+];
+
 export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
-  smart_class: Array.from({ length: 14 }, (_, i) => `Smart Class ${i + 1}`),
+  classroom: CLASSROOM_NAMES,
   lab: ["CS lab", "Bio lab", "Chem lab", "Phy lab", "stem lab"],
   staff_room: ["Staff Room"],
   control_room: ["Server Room"],
@@ -42,7 +61,7 @@ export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
 };
 
 export const AREAS: { slug: AreaSlug; label: string; image: string }[] = [
-  { slug: "smart_class", label: "Smart Classes", image: smartClassImg },
+  { slug: "classroom", label: "Classrooms", image: classroomImg },
   { slug: "lab", label: "Labs", image: labImg },
   { slug: "staff_room", label: "Staff Room", image: staffRoomImg },
   { slug: "control_room", label: "Server Room", image: serverImg },
@@ -264,12 +283,12 @@ export function getEffectiveAreaRooms<T extends { id: string; area: string; name
     }
   }
 
-  // Extra staff-created rooms for this type.
+  // Extra staff-created rooms for this type, in class order (1–9, 10 A, 10 B, …).
+  const extras: T[] = [];
   for (const room of areaRooms) {
-    if (byName.has(room.name)) {
-      result.push(room);
-    }
+    if (byName.has(room.name)) extras.push(room);
   }
+  extras.sort((a, b) => compareRoomNames(a.name, b.name));
 
-  return result;
+  return [...result, ...extras];
 }
