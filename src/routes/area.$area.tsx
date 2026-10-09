@@ -30,7 +30,7 @@ import {
   statusTone,
   getItemDisplayStatus,
   getItemStatusTone,
-  getEffectiveAreaRooms,
+  collectAreaRooms,
   AreaSlug,
   AREAS,
   getItemWeight,
@@ -77,8 +77,11 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/area/$area")({
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { room: string; item?: string } => ({
     room: typeof search["room"] === "string" ? (search["room"] as string) : "",
+    ...(typeof search["item"] === "string" && search["item"]
+      ? { item: search["item"] as string }
+      : {}),
   }),
   head: () => ({
     meta: [
@@ -113,7 +116,7 @@ interface StatusPromptState {
 
 function AreaPage() {
   const { area } = Route.useParams();
-  const { room: roomParam } = Route.useSearch();
+  const { room: roomParam, item: itemParam } = Route.useSearch();
   const navigate = useNavigate();
   const { user, isStaff } = useAuth();
   const isViewer = !isStaff;
@@ -189,7 +192,7 @@ function AreaPage() {
   });
   const currentTypeLabel = areaSetting?.label || formatAreaLabel(areaLabel(area));
 
-  const rooms = getEffectiveAreaRooms(area as AreaSlug, rawRooms);
+  const rooms = collectAreaRooms(area, areaSetting?.source_area, rawRooms);
 
   const roomId = roomParam || rooms[0]?.id || "";
   const roomName = rooms.find((r) => r.id === roomId)?.name ?? "";
@@ -357,6 +360,63 @@ function AreaPage() {
       updated_at: new Date().toISOString(),
     }));
   }, [items, area, roomName, roomId]);
+
+  const roomRemarksRef = useRef<HTMLTextAreaElement>(null);
+  const landedIssueRef = useRef("");
+
+  useEffect(() => {
+    const el = roomRemarksRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [roomRemarks]);
+
+  useEffect(() => {
+    if (!itemParam) {
+      landedIssueRef.current = "";
+      return;
+    }
+    const isRoomNote = itemParam === "remarks";
+    const match = isRoomNote ? null : displayItems.find((item) => item.id === itemParam);
+    if (!isRoomNote && !match) return;
+    const landingKey = `${roomId}:${itemParam}`;
+    if (landedIssueRef.current === landingKey) return;
+
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      const target = document.getElementById(
+        isRoomNote ? "room-issue-notes" : `work-item-${itemParam}`,
+      );
+      if (target) {
+        if (match) {
+          setSelectedItem(itemParam);
+          setRemarks(match.remarks ?? "");
+        }
+        const header = document.querySelector("header");
+        const offset = (header?.getBoundingClientRect().height ?? 72) + 12;
+        const top = target.getBoundingClientRect().top + window.scrollY - offset;
+        window.scrollTo({ top: Math.max(0, top), behavior: attempts === 1 ? "smooth" : "auto" });
+
+        const side = document.getElementById(`work-item-side-${itemParam}`);
+        const scroller = side?.parentElement?.closest(".overflow-y-auto");
+        if (side && scroller instanceof HTMLElement) {
+          const elRect = side.getBoundingClientRect();
+          const scRect = scroller.getBoundingClientRect();
+          scroller.scrollTo({
+            top: scroller.scrollTop + elRect.top - scRect.top - 8,
+            behavior: "auto",
+          });
+        }
+      }
+      if (attempts >= 10) {
+        if (target) landedIssueRef.current = landingKey;
+        window.clearInterval(timer);
+      }
+    }, 120);
+
+    return () => window.clearInterval(timer);
+  }, [itemParam, displayItems, roomId]);
 
   const catalogRows = useMemo(() => {
     return [
@@ -940,14 +1000,18 @@ function AreaPage() {
                   return (
                     <div
                       key={item.id}
+                      id={`work-item-${item.id}`}
                       onClick={() => {
                         setSelectedItem(item.id);
                         setRemarks(item.remarks ?? "");
                       }}
-                      className={`cursor-pointer rounded-lg border p-3 transition ${selectedItem === item.id
-                        ? "border-primary shadow-xs bg-accent/20"
-                        : "border-border hover:border-border/80"
-                        }`}
+                      className={`cursor-pointer rounded-lg border p-3 transition ${
+                        itemParam === item.id
+                          ? "border-red-600 shadow-xs bg-red-500/10 ring-2 ring-red-500"
+                          : selectedItem === item.id
+                            ? "border-primary shadow-xs bg-accent/20"
+                            : "border-border hover:border-border/80"
+                      }`}
                     >
                       <div className="font-medium text-foreground">
                         {item.title}
@@ -1043,8 +1107,8 @@ function AreaPage() {
             ))}
 
             {/* Overall Room Remarks — a whole-room note for any problem the entire room faces */}
-            <div className="rounded-lg border border-border p-4">
-              <label className="text-sm font-medium">Overall Room Remarks</label>
+            <div id="room-issue-notes" className="rounded-lg border border-border p-4">
+              <label className="text-sm font-medium">ENTER THE ISSUES PREVENTING WORK COMPLETION IN THIS ROOM IN THE TEXT AREA BELOW.</label>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {isViewer
                   ? currentRoom?.remarks
@@ -1052,10 +1116,18 @@ function AreaPage() {
                     : "No overall room issue is held right now."
                   : "If there is an issue, type it here and update — the text stays held. When it is solved, delete that held text and update."}
               </p>
-              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <div className="mt-2 flex flex-col items-stretch gap-2 sm:flex-row sm:items-start">
                 <Textarea
+                  ref={roomRemarksRef}
                   value={roomRemarks}
-                  onChange={(e) => setRoomRemarks(e.target.value)}
+                  onChange={(e) => {
+                    setRoomRemarks(e.target.value);
+                    const el = e.currentTarget;
+                    el.style.height = "auto";
+                    el.style.height = `${el.scrollHeight}px`;
+                  }}
+                  rows={2}
+                  className="min-h-[60px] w-full flex-1 resize-none overflow-hidden field-sizing-content"
                   placeholder={
                     isViewer
                       ? currentRoom?.remarks || "No overall room remarks yet."
@@ -1182,7 +1254,7 @@ function AreaPage() {
               </span>
             </div>
 
-            <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+            <div data-task-scroller className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
               {grouped.map(([group, subgroups], gIdx) => (
                 <div key={group} className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-primary">
@@ -1202,7 +1274,15 @@ function AreaPage() {
                       const itemPhotos = photos.filter((p) => p.work_item_id === item.id);
 
                       return (
-                        <li key={item.id} className="text-foreground/90 pl-1">
+                        <li
+                          key={item.id}
+                          id={`work-item-side-${item.id}`}
+                          className={`pl-1 ${
+                            itemParam === item.id
+                              ? "rounded-md bg-red-500/10 text-foreground ring-1 ring-red-500"
+                              : "text-foreground/90"
+                          }`}
+                        >
                           <div className="font-medium inline">
                             {item.title}
                             {item.kind === "product" ? ` (${item.quantity ?? 0})` : ""}

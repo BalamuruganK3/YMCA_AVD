@@ -1438,7 +1438,7 @@ export function getRoomDefaultWorkItems(area: AreaSlug, roomName: string): TaskD
     ];
   }
 
-  // Classrooms 1–9, then 10 A/B, 11 A/B, 12 A/B
+  // Smart Class 1–14 and Classrooms share this task list.
   return [
     {
       group_name: "Civil Work",

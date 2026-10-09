@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
   AREAS,
-  getEffectiveAreaRooms,
+  collectAreaRooms,
   getRoomProgress,
   AreaSlug,
   getItemDisplayStatus,
@@ -197,7 +197,7 @@ function PrintReportDialog({
 
       const body: string[][] = [];
       for (const slug of orderedAreaSlugs) {
-        const areaRooms = getEffectiveAreaRooms(slug as AreaSlug, rooms);
+        const areaRooms = collectAreaRooms(slug, null, rooms);
         const typeLabel = AREAS.find((a) => a.slug === slug)?.label ?? slug.replace(/[-_]/g, " ");
         for (const room of areaRooms) {
           const processes = (processesByRoom.get(room.id) ?? []).sort(
@@ -649,7 +649,7 @@ function DashboardPage() {
           )}
 
           {catalog.map((area) => {
-            const areaRooms = getEffectiveAreaRooms(area.slug as AreaSlug, rawRooms);
+            const areaRooms = collectAreaRooms(area.slug, area.sourceArea, rawRooms);
             if (areaRooms.length === 0) return null;
             return (
               <AreaRoomsSection
