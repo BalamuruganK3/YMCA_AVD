@@ -1,3 +1,4 @@
+import smartClassImg from "@/assets/area-smart-class.jpg";
 import classroomImg from "@/assets/area-smart-class.jpg";
 import labImg from "@/assets/area-lab.jpg";
 import staffRoomImg from "@/assets/area-staff-room.jpg";
@@ -14,6 +15,7 @@ import recordImg from "@/assets/Record.png";
 import { compareRoomNames } from "@/lib/utils";
 
 export type AreaSlug =
+  | "smart_class"
   | "classroom"
   | "lab"
   | "staff_room"
@@ -45,7 +47,26 @@ export const CLASSROOM_NAMES = [
   "12 B",
 ];
 
+export const SMART_CLASS_NAMES = [
+  "Class Room 1 ( Demo Class )",
+  "Class Room 2",
+  "Class Room 3",
+  "Class Room 4",
+  "Class Room 5",
+  "Class Room 6",
+  "Class Room 7",
+  "Class Room 8",
+  "Class Room 9",
+  "Class Room 10 A",
+  "Class Room 10 B",
+  "Class Room 11 A",
+  "Class Room 11 B",
+  "Class Room 12 A",
+  "Class Room 12 B",
+];
+
 export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
+  smart_class: SMART_CLASS_NAMES,
   classroom: CLASSROOM_NAMES,
   lab: ["CS lab", "Bio lab", "Chem lab", "Phy lab", "stem lab"],
   staff_room: ["Staff Room"],
@@ -61,6 +82,7 @@ export const DEFAULT_AREA_ROOMS: Record<AreaSlug, string[]> = {
 };
 
 export const AREAS: { slug: AreaSlug; label: string; image: string }[] = [
+  { slug: "smart_class", label: "Smart Classes", image: smartClassImg },
   { slug: "classroom", label: "Classrooms", image: classroomImg },
   { slug: "lab", label: "Labs", image: labImg },
   { slug: "staff_room", label: "Staff Room", image: staffRoomImg },
@@ -291,4 +313,23 @@ export function getEffectiveAreaRooms<T extends { id: string; area: string; name
   extras.sort((a, b) => compareRoomNames(a.name, b.name));
 
   return [...result, ...extras];
+}
+
+/** Rooms saved under this type, including a renamed settings slug that still points at the original area. */
+export function collectAreaRooms<T extends { id: string; area: string; name: string }>(
+  slug: string,
+  sourceArea: string | null | undefined,
+  rooms: T[],
+): T[] {
+  const accepted = new Set([slug, sourceArea].filter((value): value is string => Boolean(value)));
+  const matched = rooms.filter((room) => accepted.has(room.area));
+  const builtinSlug = ([sourceArea, slug].find((value) => value && value in DEFAULT_AREA_ROOMS) ??
+    null) as AreaSlug | null;
+  if (!builtinSlug) {
+    return [...matched].sort((a, b) => compareRoomNames(a.name, b.name));
+  }
+  return getEffectiveAreaRooms(
+    builtinSlug,
+    matched.map((room) => ({ ...room, area: builtinSlug })),
+  );
 }

@@ -30,7 +30,7 @@ export async function syncDashboardRooms() {
 
       const roomsToDelete: string[] = [];
       for (const room of roomsList) {
-        if (room.area === "server" || room.area === "smart_class") {
+        if (room.area === "server") {
           roomsToDelete.push(room.id);
         }
       }
@@ -45,12 +45,10 @@ export async function syncDashboardRooms() {
         }
         await supabase.from("work_photos").delete().in("room_id", roomsToDelete);
         await supabase.from("rooms").delete().in("id", roomsToDelete);
-        await supabase.from("area_settings").delete().eq("area", "smart_class");
-        await supabase.from("area_settings").delete().eq("source_area", "smart_class");
       }
 
       for (let i = roomsList.length - 1; i >= 0; i -= 1) {
-        if (roomsList[i] && (roomsList[i]!.area === "server" || roomsList[i]!.area === "smart_class")) {
+        if (roomsList[i] && roomsList[i]!.area === "server") {
           roomsList.splice(i, 1);
         }
       }
@@ -60,14 +58,15 @@ export async function syncDashboardRooms() {
       const knownAreas = new Set(settings.map((row) => row.area));
       const projectAlreadyStarted = roomsList.length > 0;
 
-      // Seed defaults only on a brand-new project, except Classrooms which replace Smart Class.
+      // Seed defaults only on a brand-new project. Smart Classes are restored if that area is empty.
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
         if (retired.has(slug)) continue;
         const areaHasRooms = roomsList.some((r) => r.area === slug);
         const skipEmpty = !areaHasRooms && (projectAlreadyStarted || knownAreas.has(slug));
         const seedClassroomsAsReplacement = slug === "classroom" && !areaHasRooms && !knownAreas.has("classroom");
-        if (skipEmpty && !seedClassroomsAsReplacement) {
+        // Never invent or replace Smart Class rooms. Their saved names and task progress come from the database.
+        if (slug === "smart_class" || (skipEmpty && !seedClassroomsAsReplacement)) {
           continue;
         }
 
