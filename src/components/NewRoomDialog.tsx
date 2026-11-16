@@ -138,8 +138,34 @@ export function NewRoomDialog() {
       const baseName = formatRoomName(roomName);
       if (!baseName) throw new Error("Please enter a room name (e.g. Staff Room).");
       const count = Math.max(1, Math.floor(roomCount) || 1);
-      const existingNames = roomAreas.filter((r) => r.area === target.slug).map((r) => r.name);
+      const cachedNames = roomAreas.filter((r) => r.area === target.slug).map((r) => r.name);
+      
+      // Live check in DB to ensure fresh data and prevent duplicate rooms
+      const { data: dbRooms, error: dbFetchErr } = await supabase
+        .from("rooms")
+        .select("name")
+        .eq("area", target.slug);
+      if (dbFetchErr) throw dbFetchErr;
+
+      const liveNames = (dbRooms ?? []).map((r) => r.name);
+      const existingNames = Array.from(new Set([...cachedNames, ...liveNames]));
+      const existingLower = new Set(existingNames.map((n) => n.trim().toLowerCase()));
+
+      if (count === 1 && existingLower.has(baseName.trim().toLowerCase())) {
+        throw new Error(
+          `A room named "${baseName}" already exists in ${target.label}. Duplicate room names are not allowed.`,
+        );
+      }
+
       const names = nextRoomNames(baseName, count, existingNames);
+      for (const n of names) {
+        if (existingLower.has(n.trim().toLowerCase())) {
+          throw new Error(
+            `A room named "${n}" already exists in ${target.label}. Duplicate room names are not allowed.`,
+          );
+        }
+      }
+
       const validWorks = works.filter((w) => w.heading.trim() && w.subheading.trim() && w.work.trim());
       const useDefaults = validWorks.length === 0 && Boolean(AREAS.find((a) => a.slug === target.slug || a.slug === target.source));
 

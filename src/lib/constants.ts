@@ -271,23 +271,22 @@ export function getEffectiveAreaRooms<T extends { id: string; area: string; name
   const expectedNames = DEFAULT_AREA_ROOMS[slug] || [];
   const areaRooms = existingDbRooms.filter((r) => r.area === slug);
 
-  const byName = new Map(areaRooms.map((r) => [r.name, r]));
   const result: T[] = [];
+  const usedIds = new Set<string>();
 
-  // Real default rooms first. Deleted rooms stay gone — do not inject placeholders.
+  // Real default rooms first in expected catalog order
   for (const name of expectedNames) {
-    const found = byName.get(name);
-    if (found) {
-      result.push(found);
-      byName.delete(name);
+    const matches = areaRooms.filter(
+      (r) => !usedIds.has(r.id) && r.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    );
+    for (const match of matches) {
+      result.push(match);
+      usedIds.add(match.id);
     }
   }
 
-  // Extra staff-created rooms for this type, in class order (1–9, 10 A, 10 B, …).
-  const extras: T[] = [];
-  for (const room of areaRooms) {
-    if (byName.has(room.name)) extras.push(room);
-  }
+  // All remaining rooms (extras and any duplicate rooms), sorted in class order
+  const extras = areaRooms.filter((r) => !usedIds.has(r.id));
   extras.sort((a, b) => compareRoomNames(a.name, b.name));
 
   return [...result, ...extras];

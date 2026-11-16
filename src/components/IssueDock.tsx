@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,8 +36,28 @@ export function useIssues() {
   });
 }
 
+function issueRoom(rooms: unknown): { id: string; name: string; area: string } | null {
+  const room = Array.isArray(rooms) ? rooms[0] : rooms;
+  if (!room || typeof room !== "object") return null;
+  const row = room as { id?: string; name?: string; area?: string };
+  if (!row.id || !row.area) return null;
+  return { id: row.id, name: row.name ?? "", area: row.area };
+}
+
 export function IssueDock({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const openPlace = (area: string, roomId: string, itemId?: string) => {
+    setOpen(false);
+    window.setTimeout(() => {
+      navigate({
+        to: "/area/$area",
+        params: { area },
+        search: itemId ? { room: roomId, item: itemId } : { room: roomId },
+      });
+    }, 0);
+  };
   const { data } = useIssues();
   const items = data?.items ?? [];
   const roomRemarks = data?.roomRemarks ?? [];
@@ -59,13 +79,13 @@ export function IssueDock({ className }: { className?: string }) {
       </DialogTrigger>
       <DialogContent className="max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Open issues & room remarks</DialogTitle>
+          <DialogTitle>Open issues</DialogTitle>
         </DialogHeader>
 
         {roomRemarks.length > 0 && (
           <div className="space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Overall room remarks ({roomRemarks.length})
+              ENTER THE ISSUES PREVENTING WORK COMPLETION IN THIS ROOM IN THE TEXT AREA BELOW.({roomRemarks.length})
             </h4>
             {roomRemarks.map((room) => (
               <li
@@ -73,18 +93,16 @@ export function IssueDock({ className }: { className?: string }) {
                 className="list-none rounded-lg border border-amber-400/40 bg-amber-500/10 p-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{areaLabel(room.area)} · {room.name}</span>
-                  <Link
-                    to="/area/$area"
-                    params={{ area: room.area }}
-                    search={{ room: room.id }}
-                    onClick={() => setOpen(false)}
+                  <span className="font-medium">{areaLabel(room.area)}</span>
+                  <button
+                    type="button"
+                    onClick={() => openPlace(room.area, room.id, "remarks")}
                     className="text-xs text-primary underline-offset-2 hover:underline"
                   >
                     Open room
-                  </Link>
+                  </button>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">{room.remarks}</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{room.remarks}</p>
               </li>
             ))}
           </div>
@@ -94,30 +112,38 @@ export function IssueDock({ className }: { className?: string }) {
           Task issues ({items.length})
         </h4>
         <ul className="space-y-3">
-          {items.map((issue) => (
+          {items.map((issue) => {
+            const room = issueRoom(issue.rooms);
+            return (
             <li
               key={issue.id}
               className="rounded-lg border border-status-issue/40 bg-status-issue/10 p-3"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium">{issue.title}</span>
-                {issue.rooms && (
-                  <Link
-                    to="/area/$area"
-                    params={{ area: issue.rooms.area }}
-                    search={{ room: issue.rooms.id }}
-                    onClick={() => setOpen(false)}
-                    className="text-xs text-primary underline-offset-2 hover:underline"
+                <div className="min-w-0">
+                  <span className="font-medium">{issue.title}</span>
+                  {issue.group_name ? (
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {issue.group_name}
+                    </p>
+                  ) : null}
+                </div>
+                {room && (
+                  <button
+                    type="button"
+                    onClick={() => openPlace(room.area, room.id, issue.id)}
+                    className="shrink-0 text-xs text-primary underline-offset-2 hover:underline"
                   >
-                    {areaLabel(issue.rooms.area)} · {issue.rooms.name}
-                  </Link>
+                    {areaLabel(room.area)} · {room.name}
+                  </button>
                 )}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {issue.remarks?.trim() || "No remarks added."}
               </p>
             </li>
-          ))}
+            );
+          })}
           {items.length === 0 && (
             <li className="text-sm text-muted-foreground">No task-level issues.</li>
           )}

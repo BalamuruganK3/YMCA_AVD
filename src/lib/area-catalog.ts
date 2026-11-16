@@ -76,7 +76,7 @@ export function buildAreaCatalog(
   const settingBySource = new Map(
     settings.filter((row) => row.source_area).map((row) => [row.source_area as string, row]),
   );
-  const builtinSlugs = new Set(AREAS.map((area) => area.slug));
+  const builtinSlugs = new Set<string>(AREAS.map((area) => area.slug));
   const known = new Set<string>();
   const custom: CatalogArea[] = [];
   const builtins: CatalogArea[] = [];
@@ -193,7 +193,7 @@ export async function renameAreaInPlace(opts: {
 
 export function nextRoomNames(baseName: string, count: number, existingNames: string[]): string[] {
   const formatted = formatRoomName(baseName);
-  if (count <= 1 && !existingNames.some((name) => name.toLowerCase() === formatted.toLowerCase())) {
+  if (count <= 1) {
     return [formatted];
   }
 
@@ -202,11 +202,6 @@ export function nextRoomNames(baseName: string, count: number, existingNames: st
   let n = 1;
   while (names.length < count) {
     const candidate = `${formatted} ${n}`;
-    const plain = formatted;
-    if (count === 1 && names.length === 0 && !taken.has(plain.toLowerCase())) {
-      names.push(plain);
-      break;
-    }
     if (!taken.has(candidate.toLowerCase())) {
       names.push(candidate);
       taken.add(candidate.toLowerCase());

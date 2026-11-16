@@ -60,7 +60,7 @@ export async function syncDashboardRooms() {
       const knownAreas = new Set(settings.map((row) => row.area));
       const projectAlreadyStarted = roomsList.length > 0;
 
-      // Seed defaults only on a brand-new project, except Classrooms which replace Smart Class.
+      // Seed defaults only on a brand-new project.
       for (const [area, roomNames] of Object.entries(DEFAULT_AREA_ROOMS)) {
         const slug = area as AreaSlug;
         if (retired.has(slug)) continue;

@@ -4,6 +4,7 @@ import { getRoomDefaultWorkItems } from "./room-tasks";
 
 export async function saveWorkItemStatusClient(input: {
   userId: string;
+  roomId?: string;
   area: string;
   roomName: string;
   itemId: string;
@@ -11,58 +12,88 @@ export async function saveWorkItemStatusClient(input: {
   status: string;
   remarks?: string | null;
 }) {
-  const { userId, area, roomName, itemId, itemTitle, status, remarks } = input;
+  const { userId, roomId: inputRoomId, area, roomName, itemId, itemTitle, status, remarks } = input;
 
   const cleanRemarks = (remarks ?? "").replace(/\[Range:\s*\d+%\]\s*/i, "").trim();
   if (!cleanRemarks) {
     throw new Error("Please enter remarks before saving this update.");
   }
 
-  const { data: existingRoom, error: roomFetchErr } = await supabase
-    .from("rooms")
-    .select("id")
-    .eq("area", area)
-    .eq("name", roomName)
-    .maybeSingle();
-  if (roomFetchErr) throw roomFetchErr;
+  let targetWorkItemId = itemId;
+  let resolvedRoomId = inputRoomId;
 
-  let roomId = existingRoom?.id;
-  let createdRoom = false;
-  if (!roomId) {
-    const { data: created, error: createRoomErr } = await supabase
-      .from("rooms")
-      .insert({ area, name: roomName, sort_order: 1 })
-      .select("id")
-      .single();
-    if (createRoomErr || !created) {
-      throw new Error(createRoomErr?.message || "Failed to create room");
+  // 1. Direct work item update if it's already an existing record in work_items
+  if (targetWorkItemId && !targetWorkItemId.startsWith("virtual-")) {
+    const { data: directItem } = await supabase
+      .from("work_items")
+      .select("id, room_id")
+      .eq("id", targetWorkItemId)
+      .maybeSingle();
+
+    if (directItem) {
+      targetWorkItemId = directItem.id;
+      resolvedRoomId = directItem.room_id;
+
+      const { error: updateErr } = await supabase
+        .from("work_items")
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+          updated_by: userId,
+          ...(remarks !== undefined ? { remarks } : {}),
+        })
+        .eq("id", targetWorkItemId);
+      if (updateErr) throw updateErr;
+
+      const { error: logErr } = await supabase.from("work_updates").insert({
+        work_item_id: targetWorkItemId,
+        status,
+        remarks: remarks ?? null,
+        user_id: userId,
+      });
+      if (logErr) throw logErr;
+
+      return { success: true as const, workItemId: targetWorkItemId, roomId: resolvedRoomId };
     }
-    roomId = created.id;
-    createdRoom = true;
   }
 
+  // 2. If it's a virtual item or not found directly, verify the room exists
+  if (resolvedRoomId && !resolvedRoomId.startsWith("virtual-")) {
+    const { data: realRoom } = await supabase
+      .from("rooms")
+      .select("id")
+      .eq("id", resolvedRoomId)
+      .maybeSingle();
+    if (realRoom) {
+      resolvedRoomId = realRoom.id;
+    }
+  }
+
+  if (!resolvedRoomId || resolvedRoomId.startsWith("virtual-")) {
+    const { data: existingRoom, error: roomFetchErr } = await supabase
+      .from("rooms")
+      .select("id")
+      .eq("area", area)
+      .ilike("name", roomName.trim())
+      .maybeSingle();
+    if (roomFetchErr) throw roomFetchErr;
+    resolvedRoomId = existingRoom?.id;
+  }
+
+  if (!resolvedRoomId || resolvedRoomId.startsWith("virtual-")) {
+    throw new Error("Room not found. Rooms can only be created using the 'Add room type' button.");
+  }
+
+  // 3. Room is confirmed to exist. Check its work items.
   const targetItems = getRoomDefaultWorkItems(area as AreaSlug, roomName);
   const { data: existingItems, error: itemsErr } = await supabase
     .from("work_items")
     .select("id, title")
-    .eq("room_id", roomId);
+    .eq("room_id", resolvedRoomId);
   if (itemsErr) throw itemsErr;
 
-  let currentItems = existingItems ?? [];
-  if (currentItems.length === 0 && createdRoom) {
-    const toInsert = targetItems.map((item) => ({
-      ...item,
-      room_id: roomId,
-    }));
-    const { data: inserted, error: insertErr } = await supabase
-      .from("work_items")
-      .insert(toInsert)
-      .select("id, title");
-    if (insertErr) throw insertErr;
-    currentItems = inserted ?? [];
-  }
+  const currentItems = existingItems ?? [];
 
-  let targetWorkItemId = itemId;
   const matchByTitle = currentItems.find(
     (i) => i.title.toLowerCase() === itemTitle.toLowerCase(),
   );
@@ -73,6 +104,7 @@ export async function saveWorkItemStatusClient(input: {
   } else if (matchById) {
     targetWorkItemId = matchById.id;
   } else {
+    // Insert new work item into the existing room
     const itemDef = targetItems.find(
       (t) => t.title.toLowerCase() === itemTitle.toLowerCase(),
     ) ?? {
@@ -86,7 +118,7 @@ export async function saveWorkItemStatusClient(input: {
       .from("work_items")
       .insert({
         ...itemDef,
-        room_id: roomId,
+        room_id: resolvedRoomId,
         status,
         remarks: remarks ?? null,
         updated_by: userId,
@@ -118,5 +150,5 @@ export async function saveWorkItemStatusClient(input: {
   });
   if (logErr) throw logErr;
 
-  return { success: true as const, workItemId: targetWorkItemId, roomId };
+  return { success: true as const, workItemId: targetWorkItemId, roomId: resolvedRoomId };
 }
