@@ -2,17 +2,30 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
+  Armchair,
   ArrowLeft,
-  Images,
-  X,
-  ExternalLink,
-  Eye,
+  Camera,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CirclePause,
+  ExternalLink,
+  Eye,
+  Hammer,
+  Images,
+  LayoutGrid,
+  ListChecks,
+  Loader2,
+  Package,
+  Paintbrush,
+  Pencil,
   Plus,
   Trash2,
-  Package,
-  Pencil,
+  Wrench,
+  X,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -102,12 +115,45 @@ export const Route = createFileRoute("/area/$area")({
 });
 
 const toneClass: Record<string, string> = {
-  done: "border-status-done bg-status-done/15 text-status-done",
-  progress: "border-status-progress bg-status-progress/15 text-status-progress",
+  done: "border-green-600 bg-green-600 text-white hover:bg-green-700",
+  progress: "border-[#1e3a8a] bg-[#1e3a8a] text-white hover:bg-[#172554]",
   issue: "border-red-600 bg-red-600 text-white font-semibold hover:bg-red-700",
   hold: "border-amber-500/40 bg-amber-500/10 text-amber-500",
   initiated: "border-sky-500/30 bg-sky-500/10 text-sky-400",
 };
+
+/** Minimal icon for each work heading, so the list is easy to scan. */
+function groupIconFor(group: string): LucideIcon {
+  const value = group.toLowerCase();
+  if (value.includes("civil")) return Hammer;
+  if (value.includes("elect")) return Zap;
+  if (value.includes("furnit")) return Armchair;
+  if (value.includes("paint")) return Paintbrush;
+  if (value.includes("plumb")) return Wrench;
+  return ListChecks;
+}
+
+/** Minimal icon for each status value. */
+function statusIconFor(status: string): LucideIcon {
+  switch (status) {
+    case "completed":
+    case "installed":
+    case "good":
+    case "count_high":
+      return CheckCircle2;
+    case "in_progress":
+    case "ordered":
+    case "received":
+    case "supplied":
+    case "count_low":
+      return Loader2;
+    case "issue":
+    case "damaged":
+      return AlertTriangle;
+    default:
+      return CirclePause;
+  }
+}
 
 interface StatusPromptState {
   item: { id: string; title: string; kind: string; status: string; remarks: string | null };
@@ -122,6 +168,7 @@ function AreaPage() {
   const isViewer = !isStaff;
   const queryClient = useQueryClient();
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const [activeGroup, setActiveGroup] = useState<string>("all");
   const [remarks, setRemarks] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const [photoTarget, setPhotoTarget] = useState<string | null>(null);
@@ -382,6 +429,9 @@ function AreaPage() {
     const landingKey = `${roomId}:${itemParam}`;
     if (landedIssueRef.current === landingKey) return;
 
+    // Make sure a deep-linked task is visible even if a category filter is active.
+    if (match) setActiveGroup(toAllCaps(match.group_name) || "OTHER");
+
     let attempts = 0;
     const timer = window.setInterval(() => {
       attempts += 1;
@@ -483,6 +533,17 @@ function AreaPage() {
     }
     return [...headingMap.entries()].map(([heading, subs]) => [heading, [...subs.entries()]] as const);
   }, [displayItems]);
+
+  const groupNames = useMemo(() => grouped.map(([group]) => group), [grouped]);
+  const effectiveGroup =
+    activeGroup !== "all" && groupNames.includes(activeGroup) ? activeGroup : "all";
+  const visibleGrouped = useMemo(
+    () =>
+      effectiveGroup === "all"
+        ? grouped
+        : grouped.filter(([group]) => group === effectiveGroup),
+    [grouped, effectiveGroup],
+  );
 
   const saveStatus = useMutation({
     mutationFn: async (input: {
@@ -967,6 +1028,28 @@ function AreaPage() {
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          {["all", ...groupNames].map((group) => {
+            const active = effectiveGroup === group;
+            const Icon = group === "all" ? LayoutGrid : groupIconFor(group);
+            return (
+              <button
+                key={group}
+                type="button"
+                onClick={() => setActiveGroup(group)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[10.5px] font-bold uppercase tracking-wide transition cursor-pointer ${
+                  active
+                    ? "border-zinc-950 bg-zinc-950 text-white shadow-sm"
+                    : "border-border/70 bg-white/80 text-zinc-600 hover:border-zinc-400 hover:text-zinc-950"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {group === "all" ? "All" : group}
+              </button>
+            );
+          })}
+        </div>
+
         <input
           ref={fileInput}
           type="file"
@@ -979,16 +1062,28 @@ function AreaPage() {
         />
 
         <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
-          <section className="panel space-y-5 p-5">
-            {grouped.map(([group, subgroups]) => (
-              <div key={group} className="space-y-3">
-                <h2 className="text-xl uppercase text-primary font-display font-semibold">
+          <section
+            className="panel space-y-5 p-5"
+            style={{ backgroundColor: "#DBDBDB" }}
+          >
+            {visibleGrouped.map(([group, subgroups]) => {
+              const GroupIcon = groupIconFor(group);
+              return (
+              <div
+                key={group}
+                className="space-y-3 rounded-2xl border border-black/5 bg-[#DBDBDB] p-4"
+              >
+                <h2 className="flex items-center gap-2 text-lg uppercase text-primary font-display font-semibold">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border/70 bg-white text-primary shadow-xs">
+                    <GroupIcon className="h-4 w-4" />
+                  </span>
                   {group}
                 </h2>
                 {subgroups.map(([sub, groupItems]) => (
-                  <div key={`${group}-${sub || "none"}`} className="space-y-3">
+                  <div key={`${group}-${sub || "none"}`} className="space-y-2.5">
                     {sub ? (
-                      <div className="text-xs font-semibold text-primary/80 uppercase tracking-wider">
+                      <div className="flex items-center gap-1.5 pl-1 text-xs font-semibold text-primary/80 uppercase tracking-wider">
+                        <span className="h-1 w-1 rounded-full bg-primary/60" />
                         {sub}
                       </div>
                     ) : null}
@@ -1005,15 +1100,15 @@ function AreaPage() {
                         setSelectedItem(item.id);
                         setRemarks(item.remarks ?? "");
                       }}
-                      className={`cursor-pointer rounded-lg border p-3 transition ${
+                      className={`cursor-pointer rounded-2xl border bg-white p-3.5 shadow-xs transition ${
                         itemParam === item.id
-                          ? "border-red-600 shadow-xs bg-red-500/10 ring-2 ring-red-500"
+                          ? "border-red-600 bg-red-500/10 ring-2 ring-red-500"
                           : selectedItem === item.id
-                            ? "border-primary shadow-xs bg-accent/20"
-                            : "border-border hover:border-border/80"
+                            ? "border-primary shadow-sm"
+                            : "border-border/70 hover:border-border"
                       }`}
                     >
-                      <div className="font-medium text-foreground">
+                      <div className="font-semibold text-foreground">
                         {item.title}
                         {item.kind === "product" && (
                           <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -1022,15 +1117,17 @@ function AreaPage() {
                         )}
                       </div>
 
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                         {statusesFor(item.kind).map((status) => {
                           const active = item.status === status;
+                          const StatusIcon = statusIconFor(status);
                           if (isViewer) {
                             return active ? (
                               <span
                                 key={status}
-                                className={`rounded-md border px-3 py-1 text-sm font-semibold ${toneClass[displayTone] || toneClass[statusTone(status)]}`}
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold ${toneClass[displayTone] || toneClass[statusTone(status)]}`}
                               >
+                                <StatusIcon className="h-3.5 w-3.5" />
                                 {displayStatus}
                               </span>
                             ) : null;
@@ -1043,11 +1140,12 @@ function AreaPage() {
                                 setSelectedItem(item.id);
                                 openStatusPrompt(item, status);
                               }}
-                              className={`rounded-md border px-3 py-1 text-sm transition hover:border-primary ${active
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold transition hover:border-primary ${active
                                 ? toneClass[statusTone(status)]
                                 : "border-border text-muted-foreground"
                                 }`}
                             >
+                              <StatusIcon className="h-3.5 w-3.5" />
                               {STATUS_LABEL[status]}
                             </button>
                           );
@@ -1060,10 +1158,11 @@ function AreaPage() {
                               setPhotoTarget(item.id);
                               fileInput.current?.click();
                             }}
-                            className="rounded-md border border-border px-3 py-1 text-sm text-muted-foreground hover:border-primary hover:text-foreground transition"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[12px] font-semibold text-muted-foreground transition hover:border-primary hover:text-foreground"
                             title="Add photo for this task"
                           >
-                            + Photo
+                            <Camera className="h-3.5 w-3.5" />
+                            Photo
                           </button>
                         )}
                         {/* Display Uploaded Task Photos Inline */}
@@ -1094,7 +1193,7 @@ function AreaPage() {
                       </div>
 
                       {item.remarks && (
-                        <p className="mt-2 text-xs sm:text-sm text-muted-foreground bg-muted/20 rounded p-1.5">
+                        <p className="mt-2 inline-block max-w-full rounded-lg border border-black/5 bg-zinc-200/70 p-2 text-xs font-medium text-black sm:text-sm">
                           Remarks: {item.remarks}
                         </p>
                       )}
@@ -1104,10 +1203,14 @@ function AreaPage() {
                   </div>
                 ))}
               </div>
-            ))}
+              );
+            })}
 
             {/* Overall Room Remarks — a whole-room note for any problem the entire room faces */}
-            <div id="room-issue-notes" className="rounded-lg border border-border p-4">
+            <div
+              id="room-issue-notes"
+              className="rounded-lg border border-border bg-[#DBDBDB] p-4"
+            >
               <label className="text-sm font-medium">ENTER THE ISSUES PREVENTING WORK COMPLETION IN THIS ROOM IN THE TEXT AREA BELOW.</label>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {isViewer
@@ -1185,10 +1288,16 @@ function AreaPage() {
             )}
           </section>
 
-          <aside className="panel h-fit space-y-4 p-5">
+          <aside
+            className="panel h-fit space-y-4 p-5"
+            style={{ backgroundColor: "#DBDBDB" }}
+          >
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
-                <h2 className="text-xl uppercase font-display font-semibold">Tasks details</h2>
+                <h2 className="flex items-center gap-2 text-xl uppercase font-display font-semibold">
+                  <ListChecks className="h-5 w-5 text-primary" />
+                  Tasks details
+                </h2>
                 {!isViewer && (
                   <>
                     <button
@@ -1249,99 +1358,120 @@ function AreaPage() {
                   </>
                 )}
               </div>
-              <span className="text-xs font-semibold text-muted-foreground bg-surface px-2.5 py-1 rounded-md border border-border">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                <ListChecks className="h-3.5 w-3.5" />
                 {displayItems.length} Tasks
               </span>
             </div>
 
             <div data-task-scroller className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
-              {grouped.map(([group, subgroups], gIdx) => (
-                <div key={group} className="space-y-2">
-                  <div className="text-xs font-bold uppercase tracking-wider text-primary">
+              {visibleGrouped.map(([group, subgroups], gIdx) => {
+                const GroupIcon = groupIconFor(group);
+                return (
+                <div
+                  key={group}
+                  className="space-y-2 rounded-2xl border border-black/5 bg-[#DBDBDB] p-3"
+                >
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-primary">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-border/70 bg-white shadow-xs">
+                      <GroupIcon className="h-3.5 w-3.5" />
+                    </span>
                     {gIdx + 1}. {group}
                   </div>
                   {subgroups.map(([sub, groupItems]) => (
-                    <div key={`${group}-${sub || "none"}`} className="space-y-1">
+                    <div key={`${group}-${sub || "none"}`} className="space-y-2">
                       {sub ? (
-                        <div className="pl-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        <div className="flex items-center gap-1.5 pl-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
                           {sub}
                         </div>
                       ) : null}
-                      <ol className="list-decimal space-y-2 pl-8 text-sm">
+                      <ul className="space-y-2 text-sm">
                         {groupItems.map((item) => {
                       const displayStatus = getItemDisplayStatus(item, isViewer);
                       const displayTone = getItemStatusTone(item, isViewer);
                       const itemPhotos = photos.filter((p) => p.work_item_id === item.id);
+                      const StatusIcon = statusIconFor(item.status);
 
                       return (
                         <li
                           key={item.id}
                           id={`work-item-side-${item.id}`}
-                          className={`pl-1 ${
+                          className={`rounded-2xl border bg-white p-3 shadow-xs transition ${
                             itemParam === item.id
-                              ? "rounded-md bg-red-500/10 text-foreground ring-1 ring-red-500"
-                              : "text-foreground/90"
+                              ? "border-red-500 bg-red-500/10 ring-1 ring-red-500"
+                              : "border-border/70"
                           }`}
                         >
-                          <div className="font-medium inline">
-                            {item.title}
-                            {item.kind === "product" ? ` (${item.quantity ?? 0})` : ""}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-semibold text-foreground">
+                              {item.title}
+                              {item.kind === "product" ? ` (${item.quantity ?? 0})` : ""}
+                            </div>
+                            {!isViewer && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteItem({ id: item.id, title: item.title })}
+                                className="inline-flex shrink-0 items-center rounded p-0.5 text-red-600 transition hover:text-red-700"
+                                title="Delete this work item"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
-                          {!isViewer && (
-                            <button
-                              type="button"
-                              onClick={() => setDeleteItem({ id: item.id, title: item.title })}
-                              className="ml-1.5 inline-flex items-center rounded p-0.5 text-muted-foreground/60 transition hover:text-red-600"
-                              title="Delete this work item"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
                             <span
-                              className={`inline-block rounded px-2 py-0.5 text-[11px] font-semibold border ${toneClass[displayTone] || toneClass[statusTone(statusTone(item.status))]} border-status-progress bg-status-progress/15 text-status-progress`}
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${toneClass[displayTone] || toneClass[statusTone(statusTone(item.status))]}`}
                             >
+                              <StatusIcon className="h-3 w-3" />
                               {displayStatus}
                             </span>
                             {itemPhotos.length > 0 && (
                               <button
                                 type="button"
                                 onClick={() => setLightboxPhoto(itemPhotos[0] ?? null)}
-                                className="text-[11px] text-primary hover:underline font-medium"
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                               >
-                                📷 {itemPhotos.length} photo{itemPhotos.length > 1 ? "s" : ""}
+                                <Camera className="h-3 w-3" />
+                                {itemPhotos.length} photo{itemPhotos.length > 1 ? "s" : ""}
                               </button>
                             )}
                             {item.remarks && (
-                              <span className="text-muted-foreground italic">— {item.remarks}</span>
+                              <span className="mt-1 inline-block max-w-full rounded-md border border-black/5 bg-zinc-200/70 px-1.5 py-0.5 text-[11px] font-medium text-black">
+                                — {item.remarks}
+                              </span>
                             )}
                           </div>
                           {!isViewer && (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {statusesFor(item.kind).map((status) => (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {statusesFor(item.kind).map((status) => {
+                                const StatusButtonIcon = statusIconFor(status);
+                                return (
                                 <button
                                   key={status}
                                   type="button"
                                   onClick={() => openStatusPrompt(item, status)}
-                                  className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold transition ${
                                     item.status === status
                                       ? toneClass[statusTone(status)]
                                       : "border-border text-muted-foreground"
                                   }`}
                                 >
+                                  <StatusButtonIcon className="h-3 w-3" />
                                   {STATUS_LABEL[status]}
                                 </button>
-                              ))}
+                              );})}
                             </div>
                           )}
                         </li>
                       );
                     })}
-                      </ol>
+                      </ul>
                     </div>
                   ))}
                 </div>
-              ))}
+                );
+              })}
 
               {displayItems.length === 0 && (
                 <p className="text-sm text-muted-foreground">Select a room to see tasks.</p>

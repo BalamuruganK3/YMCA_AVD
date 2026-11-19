@@ -78,11 +78,17 @@ export const Route = createFileRoute("/")({
 
 function PrintReportDialog({
   trigger,
+  open: controlledOpen,
+  onOpenChange,
 }: {
-  trigger: (o: { open: () => void }) => ReactNode;
+  trigger?: (o: { open: () => void }) => ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [reportDate, setReportDate] = useState(
     () => new Date().toISOString().slice(0, 10),
   );
@@ -349,10 +355,10 @@ function PrintReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger({ open: () => setOpen(true) })}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger({ open: () => setOpen(true) })}</DialogTrigger> : null}
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-lg">Print Daily Report</DialogTitle>
+          <DialogTitle className="text-lg mb-">Print Daily Report</DialogTitle>
         </DialogHeader>
         <div className="space-y-2 py-2">
           <Label htmlFor="report-date" className="text-xs font-semibold uppercase text-muted-foreground">
@@ -389,6 +395,9 @@ function DashboardPage() {
   const { isStaff } = useAuth();
   const isAdminView = !isStaff;
   const [selectedDate, setSelectedDate] = useState<string>("");
+  const [printOpen, setPrintOpen] = useState(false);
+  const [addRoomOpen, setAddRoomOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [editingDash, setEditingDash] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [subtitleDraft, setSubtitleDraft] = useState("");
@@ -513,44 +522,70 @@ function DashboardPage() {
   });
 
   const catalog = buildAreaCatalog(rawRooms, areaSettings);
+  const matchingAreasCount = searchQuery.trim()
+    ? catalog.filter((area) => {
+        const rooms = collectAreaRooms(area.slug, area.sourceArea, rawRooms);
+        return (
+          area.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          rooms.some((r) => r.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        );
+      }).length
+    : catalog.length;
 
   return (
-    <div className="min-h-screen">
-      <AppHeader subtitle="Higher Secondary School" />
+    <div className="min-h-screen pb-16">
+      <AppHeader
+        subtitle="Higher Secondary School"
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        resultCount={matchingAreasCount}
+        historyValue={selectedDate}
+        onHistoryChange={setSelectedDate}
+        onPrint={isStaff ? () => setPrintOpen(true) : undefined}
+        onAddRoom={isStaff ? () => setAddRoomOpen(true) : undefined}
+      />
 
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0 flex-1">
+      <NewRoomDialog open={addRoomOpen} onOpenChange={setAddRoomOpen} />
+
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
+        <div
+          id="overview"
+          className="flex flex-wrap items-center justify-between gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center"
+        >
+          <div className="order-2 min-w-0 flex-1 text-center sm:order-none sm:text-left">
             {isStaff && editingDash ? (
               <div className="space-y-2 max-w-xl">
                 <Input
                   value={titleDraft}
                   onChange={(e) => setTitleDraft(e.target.value)}
-                  className="text-xl font-display uppercase h-11"
+                  className="text-xl font-display uppercase h-11 bg-white"
                   placeholder="Dashboard title"
                 />
                 <Input
                   value={subtitleDraft}
                   onChange={(e) => setSubtitleDraft(e.target.value)}
+                  className="bg-white"
                   placeholder="Optional subtitle for this dashboard"
                 />
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => saveDashText.mutate()} disabled={saveDashText.isPending}>
+                  <Button size="sm" onClick={() => saveDashText.mutate()} disabled={saveDashText.isPending} className="bg-zinc-950 text-white rounded-full">
                     Save text
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditingDash(false)}>
+                  <Button size="sm" variant="ghost" onClick={() => setEditingDash(false)} className="rounded-full">
                     Cancel
                   </Button>
                 </div>
               </div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-3xl uppercase font-display font-semibold">{dashTitle}</h1>
+                <div className="flex items-center justify-center gap-2 sm:justify-start">
+                  <h1 className="text-3xl uppercase font-display font-bold tracking-tight text-zinc-950 sm:text-4xl">
+                    {dashTitle}
+                  </h1>
                   {isStaff && (
                     <button
                       type="button"
-                      className="text-muted-foreground hover:text-foreground"
+                      className="text-zinc-500 hover:text-zinc-950 cursor-pointer"
                       title="Edit dashboard text"
                       onClick={() => {
                         setTitleDraft(dashTitle);
@@ -562,16 +597,20 @@ function DashboardPage() {
                     </button>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {selectedDate
-                    ? `Showing work recorded on ${new Date(selectedDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} only.`
-                    : dashSubtitle || " "}
-                </p>
+                {selectedDate || dashSubtitle ? (
+                  <p className="mt-1 text-sm font-medium text-zinc-600">
+                    {selectedDate
+                      ? `Showing work recorded on ${new Date(selectedDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} only.`
+                      : dashSubtitle}
+                  </p>
+                ) : null}
               </>
             )}
+
+            {/* Last updated timestamp with Clock icon */}
             {lastUpdatedAt && (
-              <p className="text-emerald-400 font-semibold text-sm leading-relaxed tracking-wide flex items-center gap-1.5">
-                <Clock className="h-4 w-4 text-emerald-400 shrink-0" />
+              <p className="mt-2 flex items-center justify-center gap-1.5 text-xs font-semibold leading-relaxed tracking-wide text-zinc-700 sm:justify-start">
+                <Clock className="h-3.5 w-3.5 text-zinc-600 shrink-0" />
                 <span>
                   Last updated{" "}
                   {new Date(lastUpdatedAt).toLocaleString(undefined, {
@@ -586,23 +625,23 @@ function DashboardPage() {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {targetDeadline && (
-              <div className="flex items-center gap-3.5 rounded-xl border border-primary/30 bg-gradient-to-r from-primary/15 via-primary/5 to-surface px-4 py-2.5 shadow-sm">
-                <div className="text-center min-w-[3.5rem]">
-                  <div className="font-display text-3xl sm:text-4xl font-bold leading-none text-primary">
+          {targetDeadline && (
+            <div className="order-1 flex w-full justify-center sm:order-none sm:w-auto">
+              <div className="flex w-fit items-center gap-3.5 rounded-2xl border border-white/90 bg-[#dfe5eb] px-4 py-2.5 shadow-neo-sm sm:mx-0">
+                <div className="min-w-[3.5rem] text-center">
+                  <div className="font-display text-3xl font-extrabold leading-none text-zinc-950 sm:text-4xl">
                     {daysLeft(targetDeadline)}
                   </div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-primary/80 mt-0.5">
+                  <div className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
                     {daysLeft(targetDeadline) === 1 ? "Day Left" : "Days Left"}
                   </div>
                 </div>
-                <div className="h-9 w-px bg-primary/20" />
-                <div className="text-xs">
-                  <div className="font-semibold uppercase tracking-wider text-muted-foreground">
+                <div className="h-9 w-px bg-zinc-300" />
+                <div className="text-center text-xs">
+                  <div className="font-bold uppercase tracking-wider text-zinc-500">
                     Target Deadline
                   </div>
-                  <div className="font-medium text-foreground text-sm">
+                  <div className="text-sm font-bold text-zinc-900">
                     {new Date(targetDeadline + "T00:00:00").toLocaleDateString(undefined, {
                       month: "short",
                       day: "numeric",
@@ -611,31 +650,36 @@ function DashboardPage() {
                   </div>
                 </div>
               </div>
-            )}
-            <div className="flex flex-col gap-1.5 items-start">
-              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                Past Date's History
+            </div>
+          )}
+
+          <div className="order-3 ml-auto hidden w-full flex-wrap items-center justify-end gap-3 sm:order-none sm:flex sm:w-auto lg:ml-0 lg:justify-self-end">
+            <div className="hidden w-full flex-col items-start gap-1 sm:flex sm:w-auto">
+              <span className="pl-1 text-[10.5px] font-bold uppercase tracking-wider text-zinc-500">
+                History
               </span>
-              <div className="flex items-center gap-2 rounded-xl border-2 border-white bg-surface px-3 py-2">
+              <div className="flex items-center gap-1.5 rounded-2xl border border-white/90 bg-[#dfe5eb] px-3 py-1 shadow-neo-sm">
                 <Input
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="w-auto text-sm h-8 text-white"
+                  className="h-8 w-auto min-w-[9rem] rounded-none border-0 bg-transparent text-sm text-zinc-900 shadow-none focus-visible:ring-0 [color-scheme:light] sm:min-w-0"
                 />
                 {selectedDate && (
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedDate("")} className="h-8 text-xs">
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedDate("")} className="h-7 px-2 text-xs font-semibold text-zinc-600 hover:text-zinc-950 rounded-full cursor-pointer">
                     Clear
                   </Button>
                 )}
               </div>
             </div>
-            <IssueDock />
+
             {isStaff && (
               <PrintReportDialog
+                open={printOpen}
+                onOpenChange={setPrintOpen}
                 trigger={({ open }) => (
-                  <Button size="sm" variant="outline" onClick={open}>
-                    <Printer className="mr-1 h-4 w-4" /> Print Report
+                  <Button size="sm" variant="outline" onClick={open} className="hidden rounded-full border-white/90 bg-white/80 font-bold text-zinc-800 shadow-neo-sm hover:bg-white hover:text-zinc-950 cursor-pointer sm:inline-flex lg:mt-4">
+                    <Printer className="mr-1.5 h-3.5 w-3.5" /> Print Report
                   </Button>
                 )}
               />
@@ -643,37 +687,45 @@ function DashboardPage() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        {/* Detailed Room Status: cards matching uploaded reference UI */}
+        <div id="classrooms" className="space-y-6 pt-2">
+          {searchQuery && (
+            <div className="flex justify-end border-b border-zinc-200/90 pb-2.5">
+              <span className="text-xs font-bold text-zinc-500">
+                Filtered by “{searchQuery}” ({matchingAreasCount} matching)
+              </span>
+            </div>
+          )}
+
           {isLoading && (
-            <p className="text-sm text-muted-foreground p-4">Loading dashboard rooms…</p>
+            <p className="text-sm font-medium text-zinc-500 p-4">Loading dashboard rooms…</p>
           )}
 
-          {catalog.map((area) => {
-            const areaRooms = collectAreaRooms(area.slug, area.sourceArea, rawRooms);
-            if (areaRooms.length === 0) return null;
-            return (
-              <AreaRoomsSection
-                key={area.slug}
-                area={area}
-                areaRooms={areaRooms}
-                isStaff={isStaff}
-                settings={areaSettings}
-              />
-            );
-          })}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {catalog.map((area) => {
+              const areaRooms = collectAreaRooms(area.slug, area.sourceArea, rawRooms);
+              if (areaRooms.length === 0) return null;
 
-          {isStaff && (
-            <section className="panel overflow-hidden">
-              <div className="p-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <NewRoomDialog />
-                  <div className="text-xs text-muted-foreground max-w-[18rem]">
-                    Add a room type with image, name and number of rooms. Existing types receive extra rooms instead of a new table.
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
+              if (searchQuery.trim()) {
+                const matchesArea = area.label.toLowerCase().includes(searchQuery.toLowerCase());
+                const matchingRooms = areaRooms.filter((r) =>
+                  r.name.toLowerCase().includes(searchQuery.toLowerCase()),
+                );
+                if (!matchesArea && matchingRooms.length === 0) return null;
+              }
+
+              return (
+                <AreaRoomsSection
+                  key={area.slug}
+                  area={area}
+                  areaRooms={areaRooms}
+                  isStaff={isStaff}
+                  settings={areaSettings}
+                />
+              );
+            })}
+          </div>
+
         </div>
       </main>
 

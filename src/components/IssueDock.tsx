@@ -44,7 +44,13 @@ function issueRoom(rooms: unknown): { id: string; name: string; area: string } |
   return { id: row.id, name: row.name ?? "", area: row.area };
 }
 
-export function IssueDock({ className }: { className?: string }) {
+export function IssueDock({
+  className,
+  variant = "default",
+}: {
+  className?: string;
+  variant?: "default" | "nav";
+}) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -66,49 +72,71 @@ export function IssueDock({ className }: { className?: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button
-          variant={total > 0 ? "destructive" : "outline"}
-          size="sm"
-          className={`gap-1.5 font-semibold transition-transform hover:scale-105 shadow-xs ${className ?? ""}`}
-        >
-          <AlertTriangle
-            className={`h-4 w-4 ${total > 0 ? "animate-pulse" : "text-muted-foreground"}`}
-          />
-          <span>Issues {total > 0 ? `(${total})` : "(0)"}</span>
-        </Button>
+        {variant === "nav" ? (
+          <button
+            type="button"
+            className={`inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[13px] font-semibold text-zinc-600 transition-all duration-200 hover:bg-white/60 hover:text-zinc-950 cursor-pointer ${className ?? ""}`}
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0 text-zinc-600" />
+            <span className="hidden sm:inline">Issues</span>
+            <span
+              className={`inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                total > 0
+                  ? "bg-red-600 text-white"
+                  : "bg-zinc-200 text-zinc-600"
+              }`}
+            >
+              {total}
+            </span>
+          </button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className={`gap-1.5 rounded-full border-white/90 bg-[#f0f3f6] font-bold text-zinc-800 shadow-neo-sm transition-transform hover:scale-[1.02] hover:bg-white cursor-pointer ${className ?? ""}`}
+          >
+            <AlertTriangle
+              className={`h-4 w-4 ${total > 0 ? "animate-pulse text-zinc-950" : "text-zinc-500"}`}
+            />
+            <span>
+              Issues{" "}
+              <span className={total > 0 ? "text-red-600" : undefined}>({total})</span>
+            </span>
+          </Button>
+        )}
       </DialogTrigger>
-      <DialogContent className="max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-h-[80vh] overflow-y-auto bg-[#f0f3f6] border border-white/90 shadow-none text-zinc-900">
         <DialogHeader>
-          <DialogTitle>Open issues</DialogTitle>
+          <DialogTitle className="text-zinc-950 font-bold text-lg">Open issues</DialogTitle>
         </DialogHeader>
 
         {roomRemarks.length > 0 && (
           <div className="space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              ENTER THE ISSUES PREVENTING WORK COMPLETION IN THIS ROOM IN THE TEXT AREA BELOW.({roomRemarks.length})
+            <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+              Site & Room Blockers ({roomRemarks.length})
             </h4>
             {roomRemarks.map((room) => (
               <li
                 key={room.id}
-                className="list-none rounded-lg border border-amber-400/40 bg-amber-500/10 p-3"
+                className="list-none rounded-xl border border-white/90 bg-white/70 p-3 shadow-xs"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{areaLabel(room.area)}</span>
+                  <span className="font-bold text-zinc-900">{areaLabel(room.area)}</span>
                   <button
                     type="button"
                     onClick={() => openPlace(room.area, room.id, "remarks")}
-                    className="text-xs text-primary underline-offset-2 hover:underline"
+                    className="text-xs font-bold text-zinc-950 underline-offset-2 hover:underline cursor-pointer"
                   >
                     Open room
                   </button>
                 </div>
-                <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{room.remarks}</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600">{room.remarks}</p>
               </li>
             ))}
           </div>
         )}
 
-        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mt-2">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-500 mt-2">
           Task issues ({items.length})
         </h4>
         <ul className="space-y-3">
@@ -117,13 +145,13 @@ export function IssueDock({ className }: { className?: string }) {
             return (
             <li
               key={issue.id}
-              className="rounded-lg border border-status-issue/40 bg-status-issue/10 p-3"
+              className="rounded-xl border border-white/90 bg-white/70 p-3 shadow-xs"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <span className="font-medium">{issue.title}</span>
+                  <span className="font-bold text-zinc-900">{issue.title}</span>
                   {issue.group_name ? (
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                       {issue.group_name}
                     </p>
                   ) : null}
@@ -132,20 +160,20 @@ export function IssueDock({ className }: { className?: string }) {
                   <button
                     type="button"
                     onClick={() => openPlace(room.area, room.id, issue.id)}
-                    className="shrink-0 text-xs text-primary underline-offset-2 hover:underline"
+                    className="shrink-0 text-xs font-bold text-zinc-950 underline-offset-2 hover:underline cursor-pointer"
                   >
                     {areaLabel(room.area)} · {room.name}
                   </button>
                 )}
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-sm text-zinc-600">
                 {issue.remarks?.trim() || "No remarks added."}
               </p>
             </li>
             );
           })}
           {items.length === 0 && (
-            <li className="text-sm text-muted-foreground">No task-level issues.</li>
+            <li className="text-sm text-zinc-500 font-medium">No task-level issues.</li>
           )}
         </ul>
       </DialogContent>

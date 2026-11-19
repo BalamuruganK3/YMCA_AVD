@@ -47,9 +47,20 @@ import {
 
 type WorkDraft = { heading: string; subheading: string; work: string; action: "work" | "material" };
 
-export function NewRoomDialog() {
+export function NewRoomDialog({
+  open: controlledOpen,
+  onOpenChange,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}) {
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [areaType, setAreaType] = useState<AreaSlug>("classroom");
   const [roomName, setRoomName] = useState("");
@@ -228,16 +239,18 @@ export function NewRoomDialog() {
           if (!o) reset();
         }}
       >
-        <DialogTrigger asChild>
-          <button
-            type="button"
-            className="flex min-w-[6.5rem] flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-primary transition hover:scale-105 hover:bg-primary/15 cursor-pointer"
-            title="Add a room type or more rooms"
-          >
-            <Plus className="h-6 w-6" />
-            <span className="text-[11px] font-semibold">Add room type</span>
-          </button>
-        </DialogTrigger>
+        {controlledOpen === undefined ? (
+          <DialogTrigger asChild>
+            <button
+              type="button"
+              className="flex min-w-[6.5rem] flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-primary transition hover:scale-105 hover:bg-primary/15 cursor-pointer"
+              title="Add a room type or more rooms"
+            >
+              <Plus className="h-6 w-6" />
+              <span className="text-[11px] font-semibold">Add room type</span>
+            </button>
+          </DialogTrigger>
+        ) : null}
         <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-lg">Add room type or rooms</DialogTitle>

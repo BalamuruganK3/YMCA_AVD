@@ -205,40 +205,25 @@ export function progressOf(items: { status: string; remarks?: string | null }[])
   return Math.round((sum / items.length) * 100);
 }
 
+/**
+ * Monochrome progress palette.
+ * Depth is expressed with lightness only — never red for low or green for high.
+ * Lightness follows a clear visual hierarchy, so 0% still reads as "quiet"
+ * and 100% reads as "bright" without relying on hue.
+ */
 export function getCircularColor(pct: number) {
-  if (pct >= 100)
+  if (pct > 0)
     return {
-      stroke: "#22c55e",
-      text: "text-emerald-500",
-      bg: "bg-emerald-500/10",
-      border: "border-emerald-500/30",
-    };
-  if (pct >= 75)
-    return {
-      stroke: "#14b8a6",
-      text: "text-teal-500",
-      bg: "bg-teal-500/10",
-      border: "border-teal-500/30",
-    };
-  if (pct >= 50)
-    return {
-      stroke: "#3b82f6",
-      text: "text-blue-500",
-      bg: "bg-blue-500/10",
-      border: "border-blue-500/30",
-    };
-  if (pct >= 25)
-    return {
-      stroke: "#f59e0b",
-      text: "text-amber-500",
-      bg: "bg-amber-500/10",
-      border: "border-amber-500/30",
+      stroke: "#000000",
+      text: "text-black font-extrabold",
+      bg: "bg-white",
+      border: "border-black/20",
     };
   return {
-    stroke: "#f43f5e",
-    text: "text-rose-500",
-    bg: "bg-rose-500/10",
-    border: "border-rose-500/30",
+    stroke: "#cbd5e1",
+    text: "text-zinc-500 font-bold",
+    bg: "bg-white",
+    border: "border-zinc-200",
   };
 }
 
